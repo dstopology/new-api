@@ -35,6 +35,7 @@ export interface ProfitSummary {
   revenue_usd: number
   estimated_cost_usd: number
   profit_usd: number
+  cost_ratio: number
   profit_rate: number
   request_count: number
   failed_count: number
@@ -72,6 +73,7 @@ export interface ProfitChannelItem {
 
 export interface ProfitModelItem {
   model_name: string
+  cost_ratio: number
   revenue_usd: number
   estimated_cost_usd: number
   profit_usd: number
@@ -97,8 +99,27 @@ export interface ProfitOverview {
   topups: ProfitTopUpItem[]
 }
 
+export interface ProfitCostRatioConfig {
+  default_ratio?: number | null
+  provider_ratios: Record<string, number>
+  channel_ratios: Record<string, number>
+  model_ratios: Record<string, number>
+  provider_model_ratios: Record<string, number>
+  channel_model_ratios: Record<string, number>
+}
+
+export interface ProfitPreviewRequest extends ProfitQueryParams {
+  cost_ratio_config: ProfitCostRatioConfig
+}
+
 export interface ProfitOverviewResponse {
   success: boolean
   message?: string
   data?: ProfitOverview
+}
+
+export interface ProfitCostRatioConfigResponse {
+  success: boolean
+  message?: string
+  data?: ProfitCostRatioConfig
 }

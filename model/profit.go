@@ -1,7 +1,10 @@
 package model
 
 import (
+	"errors"
+	"fmt"
 	"math"
+	"strconv"
 	"strings"
 
 	"github.com/QuantumNous/new-api/common"
@@ -9,6 +12,8 @@ import (
 )
 
 const profitLogHardLimit = 200000
+const ProfitCostRatioConfigOptionKey = "ProfitCostRatioConfig"
+const profitCostRatioMax = 100
 
 type ProfitQuery struct {
 	StartTime       int64
@@ -19,6 +24,7 @@ type ProfitQuery struct {
 	Group           string
 	PaymentProvider string
 	PaymentMethod   string
+	CostRatioConfig *ProfitCostRatioConfig
 }
 
 type ProfitSummary struct {
@@ -29,6 +35,7 @@ type ProfitSummary struct {
 	RevenueUSD     float64 `json:"revenue_usd"`
 	EstimatedCost  float64 `json:"estimated_cost_usd"`
 	ProfitUSD      float64 `json:"profit_usd"`
+	CostRatio      float64 `json:"cost_ratio"`
 	ProfitRate     float64 `json:"profit_rate"`
 	RequestCount   int64   `json:"request_count"`
 	FailedCount    int64   `json:"failed_count"`
@@ -66,6 +73,7 @@ type ProfitChannelItem struct {
 
 type ProfitModelItem struct {
 	ModelName        string  `json:"model_name"`
+	CostRatio        float64 `json:"cost_ratio"`
 	RevenueUSD       float64 `json:"revenue_usd"`
 	EstimatedCost    float64 `json:"estimated_cost_usd"`
 	ProfitUSD        float64 `json:"profit_usd"`
@@ -89,6 +97,15 @@ type ProfitOverview struct {
 	Channels []ProfitChannelItem `json:"channels"`
 	Models   []ProfitModelItem   `json:"models"`
 	TopUps   []ProfitTopUpItem   `json:"topups"`
+}
+
+type ProfitCostRatioConfig struct {
+	DefaultRatio        *float64           `json:"default_ratio,omitempty"`
+	ProviderRatios      map[string]float64 `json:"provider_ratios"`
+	ChannelRatios       map[string]float64 `json:"channel_ratios"`
+	ModelRatios         map[string]float64 `json:"model_ratios"`
+	ProviderModelRatios map[string]float64 `json:"provider_model_ratios"`
+	ChannelModelRatios  map[string]float64 `json:"channel_model_ratios"`
 }
 
 type profitLogRow struct {
@@ -136,6 +153,165 @@ func profitRatio(cost float64, revenue float64) float64 {
 	return math.Round(cost/revenue*10000) / 10000
 }
 
+func newProfitCostRatioConfig() ProfitCostRatioConfig {
+	return ProfitCostRatioConfig{
+		ProviderRatios:      map[string]float64{},
+		ChannelRatios:       map[string]float64{},
+		ModelRatios:         map[string]float64{},
+		ProviderModelRatios: map[string]float64{},
+		ChannelModelRatios:  map[string]float64{},
+	}
+}
+
+func normalizeProfitModelKey(modelName string) string {
+	return strings.ToLower(strings.TrimSpace(modelName))
+}
+
+func normalizeProfitIDKey(raw string) string {
+	id, err := strconv.Atoi(strings.TrimSpace(raw))
+	if err != nil || id <= 0 {
+		return ""
+	}
+	return strconv.Itoa(id)
+}
+
+func normalizeProfitCompositeKey(raw string, idNormalizer func(string) string) string {
+	parts := strings.SplitN(strings.TrimSpace(raw), "|", 2)
+	if len(parts) != 2 {
+		return ""
+	}
+	idKey := idNormalizer(parts[0])
+	modelKey := normalizeProfitModelKey(parts[1])
+	if idKey == "" || modelKey == "" {
+		return ""
+	}
+	return idKey + "|" + modelKey
+}
+
+func isValidProfitCostRatio(ratio float64) bool {
+	return !math.IsNaN(ratio) && !math.IsInf(ratio, 0) && ratio >= 0 && ratio <= profitCostRatioMax
+}
+
+func normalizeProfitCostRatioMap(raw map[string]float64, normalizeKey func(string) string) (map[string]float64, error) {
+	normalized := map[string]float64{}
+	for key, ratio := range raw {
+		normalizedKey := normalizeKey(key)
+		if normalizedKey == "" {
+			continue
+		}
+		if !isValidProfitCostRatio(ratio) {
+			return nil, fmt.Errorf("成本倍率无效：%s", key)
+		}
+		normalized[normalizedKey] = ratio
+	}
+	return normalized, nil
+}
+
+func NormalizeProfitCostRatioConfig(config ProfitCostRatioConfig) (*ProfitCostRatioConfig, error) {
+	normalized := newProfitCostRatioConfig()
+	if config.DefaultRatio != nil {
+		if !isValidProfitCostRatio(*config.DefaultRatio) {
+			return nil, errors.New("默认成本倍率无效")
+		}
+		defaultRatio := *config.DefaultRatio
+		normalized.DefaultRatio = &defaultRatio
+	}
+
+	var err error
+	normalized.ProviderRatios, err = normalizeProfitCostRatioMap(config.ProviderRatios, normalizeProfitIDKey)
+	if err != nil {
+		return nil, err
+	}
+	normalized.ChannelRatios, err = normalizeProfitCostRatioMap(config.ChannelRatios, normalizeProfitIDKey)
+	if err != nil {
+		return nil, err
+	}
+	normalized.ModelRatios, err = normalizeProfitCostRatioMap(config.ModelRatios, normalizeProfitModelKey)
+	if err != nil {
+		return nil, err
+	}
+	normalized.ProviderModelRatios, err = normalizeProfitCostRatioMap(config.ProviderModelRatios, func(key string) string {
+		return normalizeProfitCompositeKey(key, normalizeProfitIDKey)
+	})
+	if err != nil {
+		return nil, err
+	}
+	normalized.ChannelModelRatios, err = normalizeProfitCostRatioMap(config.ChannelModelRatios, func(key string) string {
+		return normalizeProfitCompositeKey(key, normalizeProfitIDKey)
+	})
+	if err != nil {
+		return nil, err
+	}
+	return &normalized, nil
+}
+
+func GetProfitCostRatioConfig() (*ProfitCostRatioConfig, error) {
+	common.OptionMapRWMutex.RLock()
+	raw := strings.TrimSpace(common.OptionMap[ProfitCostRatioConfigOptionKey])
+	common.OptionMapRWMutex.RUnlock()
+	if raw == "" {
+		config := newProfitCostRatioConfig()
+		return &config, nil
+	}
+
+	config := newProfitCostRatioConfig()
+	if err := common.UnmarshalJsonStr(raw, &config); err != nil {
+		return nil, err
+	}
+	return NormalizeProfitCostRatioConfig(config)
+}
+
+func SaveProfitCostRatioConfig(config ProfitCostRatioConfig) (*ProfitCostRatioConfig, error) {
+	normalized, err := NormalizeProfitCostRatioConfig(config)
+	if err != nil {
+		return nil, err
+	}
+	jsonBytes, err := common.Marshal(normalized)
+	if err != nil {
+		return nil, err
+	}
+	if err := UpdateOption(ProfitCostRatioConfigOptionKey, string(jsonBytes)); err != nil {
+		return nil, err
+	}
+	return normalized, nil
+}
+
+func lookupProfitCostRatio(config ProfitCostRatioConfig, channelID int, channelType int, modelName string) (float64, bool) {
+	channelKey := strconv.Itoa(channelID)
+	providerKey := strconv.Itoa(channelType)
+	modelKey := normalizeProfitModelKey(modelName)
+
+	if channelID > 0 && modelKey != "" {
+		if ratio, ok := config.ChannelModelRatios[channelKey+"|"+modelKey]; ok {
+			return ratio, true
+		}
+	}
+	if channelID > 0 {
+		if ratio, ok := config.ChannelRatios[channelKey]; ok {
+			return ratio, true
+		}
+	}
+	if channelType > 0 && modelKey != "" {
+		if ratio, ok := config.ProviderModelRatios[providerKey+"|"+modelKey]; ok {
+			return ratio, true
+		}
+	}
+	if channelType > 0 {
+		if ratio, ok := config.ProviderRatios[providerKey]; ok {
+			return ratio, true
+		}
+	}
+	if modelKey != "" {
+		if ratio, ok := config.ModelRatios[modelKey]; ok {
+			return ratio, true
+		}
+	}
+	if config.DefaultRatio != nil {
+		return *config.DefaultRatio, true
+	}
+	return 0, false
+}
+
 func channelTypeName(channelType int) string {
 	if channelType == 0 {
 		return "Unknown"
@@ -166,6 +342,21 @@ func estimateCostQuota(row profitLogRow) float64 {
 }
 
 func GetProfitOverview(query ProfitQuery) (*ProfitOverview, error) {
+	costRatioConfig := query.CostRatioConfig
+	if costRatioConfig == nil {
+		config, err := GetProfitCostRatioConfig()
+		if err != nil {
+			return nil, err
+		}
+		costRatioConfig = config
+	} else {
+		normalized, err := NormalizeProfitCostRatioConfig(*costRatioConfig)
+		if err != nil {
+			return nil, err
+		}
+		costRatioConfig = normalized
+	}
+
 	channelNames := map[int]string{}
 	channelTypes := map[int]int{}
 	channelIDsByType := map[int][]int{}
@@ -285,6 +476,9 @@ func GetProfitOverview(query ProfitQuery) (*ProfitOverview, error) {
 
 		revenueUSD := profitUSDFromQuota(float64(row.Quota))
 		costUSD := profitUSDFromQuota(estimateCostQuota(row))
+		if ratio, ok := lookupProfitCostRatio(*costRatioConfig, row.ChannelID, channelTypes[row.ChannelID], row.ModelName); ok {
+			costUSD = revenueUSD * ratio
+		}
 		profitUSD := revenueUSD - costUSD
 
 		overview.Summary.RequestCount++
@@ -341,6 +535,7 @@ func GetProfitOverview(query ProfitQuery) (*ProfitOverview, error) {
 	if overview.Summary.TopUpCount > 0 {
 		overview.Summary.AvgTopUpAmount = overview.Summary.TopUpAmount / float64(overview.Summary.TopUpCount)
 	}
+	overview.Summary.CostRatio = profitRatio(overview.Summary.EstimatedCost, overview.Summary.RevenueUSD)
 	overview.Summary.ProfitRate = profitRate(overview.Summary.ProfitUSD, overview.Summary.RevenueUSD)
 
 	for _, trend := range trendMap {
@@ -352,6 +547,7 @@ func GetProfitOverview(query ProfitQuery) (*ProfitOverview, error) {
 		overview.Channels = append(overview.Channels, *channel)
 	}
 	for _, modelItem := range modelMap {
+		modelItem.CostRatio = profitRatio(modelItem.EstimatedCost, modelItem.RevenueUSD)
 		modelItem.ProfitRate = profitRate(modelItem.ProfitUSD, modelItem.RevenueUSD)
 		overview.Models = append(overview.Models, *modelItem)
 	}

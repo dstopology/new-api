@@ -51,9 +51,23 @@ export function useSidebarView(): ResolvedSidebarView {
 
   const rootNavGroups = useMemo<NavGroup[]>(() => {
     const isAdmin = userRole !== undefined && userRole >= ROLE.ADMIN
-    return configFilteredRoot.filter((group) =>
-      group.id === 'admin' ? isAdmin : true
-    )
+    const isRoot = userRole === ROLE.SUPER_ADMIN
+    return configFilteredRoot
+      .map((group) => {
+        if (group.id !== 'admin') return group
+        return {
+          ...group,
+          items: group.items.filter((item) => {
+            if ('url' in item && item.url === '/system-settings/site') {
+              return isRoot
+            }
+            return true
+          }),
+        }
+      })
+      .filter((group) =>
+        group.id === 'admin' ? isAdmin && group.items.length > 0 : true
+      )
   }, [configFilteredRoot, userRole])
 
   const view = resolveSidebarView(pathname)

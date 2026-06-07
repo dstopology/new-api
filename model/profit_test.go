@@ -1,6 +1,7 @@
 package model
 
 import (
+	"strconv"
 	"testing"
 
 	"github.com/QuantumNous/new-api/common"
@@ -133,4 +134,67 @@ func TestGetProfitOverviewAggregatesLogsAndTopUps(t *testing.T) {
 	assert.Equal(t, PaymentProviderEpay, overview.TopUps[0].PaymentProvider)
 	assert.Equal(t, "wxpay", overview.TopUps[0].PaymentMethod)
 	assert.InDelta(t, 25, overview.TopUps[0].Money, 0.0001)
+}
+
+func TestGetProfitOverviewUsesConfiguredCostRatio(t *testing.T) {
+	truncateTables(t)
+	withProfitQuotaPerUnit(t, 1000)
+
+	other, err := common.Marshal(profitLogOther{GroupRatio: 2})
+	require.NoError(t, err)
+
+	require.NoError(t, DB.Create(&Channel{
+		Id:     901,
+		Type:   constant.ChannelTypeOpenAI,
+		Key:    "test-key",
+		Status: common.ChannelStatusEnabled,
+		Name:   "OpenAI Primary",
+	}).Error)
+	require.NoError(t, LOG_DB.Create(&Log{
+		CreatedAt:        1700000000,
+		Type:             LogTypeConsume,
+		ChannelId:        901,
+		ModelName:        "gpt-special",
+		Group:            "vip",
+		Quota:            1000,
+		PromptTokens:     120,
+		CompletionTokens: 80,
+		Other:            string(other),
+	}).Error)
+
+	defaultRatio := 0.9
+	config := ProfitCostRatioConfig{
+		DefaultRatio: &defaultRatio,
+		ProviderRatios: map[string]float64{
+			strconv.Itoa(constant.ChannelTypeOpenAI): 0.6,
+		},
+		ChannelRatios: map[string]float64{
+			"901": 0.3,
+		},
+		ModelRatios: map[string]float64{
+			"gpt-special": 0.4,
+		},
+		ChannelModelRatios: map[string]float64{
+			"901|gpt-special": 0.2,
+		},
+	}
+
+	overview, err := GetProfitOverview(ProfitQuery{
+		StartTime:       1700000000,
+		EndTime:         1700003600,
+		CostRatioConfig: &config,
+	})
+	require.NoError(t, err)
+	require.NotNil(t, overview)
+
+	assert.InDelta(t, 1, overview.Summary.RevenueUSD, 0.0001)
+	assert.InDelta(t, 0.2, overview.Summary.EstimatedCost, 0.0001)
+	assert.InDelta(t, 0.8, overview.Summary.ProfitUSD, 0.0001)
+	assert.InDelta(t, 0.2, overview.Summary.CostRatio, 0.0001)
+	assert.InDelta(t, 80, overview.Summary.ProfitRate, 0.0001)
+
+	require.Len(t, overview.Channels, 1)
+	assert.InDelta(t, 0.2, overview.Channels[0].CostRatio, 0.0001)
+	require.Len(t, overview.Models, 1)
+	assert.InDelta(t, 0.2, overview.Models[0].CostRatio, 0.0001)
 }

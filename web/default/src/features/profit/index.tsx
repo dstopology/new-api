@@ -18,27 +18,34 @@ For commercial licensing, please contact support@quantumnous.com
 */
 import {
   useCallback,
+  useEffect,
   useMemo,
   useState,
   type ChangeEvent,
   type ElementType,
   type ReactNode,
 } from 'react'
-import { useQuery } from '@tanstack/react-query'
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import {
   AlertTriangle,
   BarChart3,
+  Calculator,
   CircleDollarSign,
   Coins,
   CreditCard,
+  Plus,
   RefreshCw,
+  Save,
   Search,
   SlidersHorizontal,
+  Trash2,
   TrendingUp,
   WalletCards,
   Zap,
 } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
+import { toast } from 'sonner'
+import { useDebounce } from '@/hooks'
 import {
   formatNumber,
   formatTimestampForInput,
@@ -65,9 +72,15 @@ import {
 } from '@/components/ui/table'
 import { SectionPageLayout } from '@/components/layout'
 import { FadeIn } from '@/components/page-transition'
-import { getProfitOverview } from './api'
+import {
+  getProfitCostRatioConfig,
+  getProfitOverview,
+  previewProfitOverview,
+  updateProfitCostRatioConfig,
+} from './api'
 import type {
   ProfitChannelItem,
+  ProfitCostRatioConfig,
   ProfitModelItem,
   ProfitOverview,
   ProfitQueryParams,
@@ -86,6 +99,27 @@ type ProfitFilterDraft = {
   payment_method: string
 }
 
+type CostRatioRuleScope =
+  | 'provider'
+  | 'channel'
+  | 'model'
+  | 'provider_model'
+  | 'channel_model'
+
+type CostRatioRuleDraft = {
+  id: string
+  scope: CostRatioRuleScope
+  provider: string
+  channel_id: string
+  model_name: string
+  ratio: string
+}
+
+type CostRatioDraft = {
+  default_ratio: string
+  rules: CostRatioRuleDraft[]
+}
+
 const EMPTY_OVERVIEW: ProfitOverview = {
   summary: {
     start_timestamp: 0,
@@ -95,6 +129,7 @@ const EMPTY_OVERVIEW: ProfitOverview = {
     revenue_usd: 0,
     estimated_cost_usd: 0,
     profit_usd: 0,
+    cost_ratio: 0,
     profit_rate: 0,
     request_count: 0,
     failed_count: 0,
@@ -109,6 +144,15 @@ const EMPTY_OVERVIEW: ProfitOverview = {
   topups: [],
 }
 
+const EMPTY_COST_RATIO_CONFIG: ProfitCostRatioConfig = {
+  default_ratio: null,
+  provider_ratios: {},
+  channel_ratios: {},
+  model_ratios: {},
+  provider_model_ratios: {},
+  channel_model_ratios: {},
+}
+
 const QUICK_RANGES = [
   { days: 1, label: 'Last 24 Hours' },
   { days: 7, label: 'Last 7 Days' },
@@ -121,6 +165,14 @@ const CHANNEL_PROVIDERS = [
   { value: '14', label: 'Anthropic' },
   { value: '24', label: 'Gemini' },
 ] as const
+
+const COST_RATIO_SCOPES: Array<{ value: CostRatioRuleScope; label: string }> = [
+  { value: 'provider', label: 'Provider' },
+  { value: 'channel', label: 'Channel' },
+  { value: 'model', label: 'Model' },
+  { value: 'provider_model', label: 'Provider + Model' },
+  { value: 'channel_model', label: 'Channel + Model' },
+]
 
 const PAYMENT_PROVIDERS = [
   { value: '', label: 'All Payment Providers' },
@@ -159,6 +211,188 @@ function createDefaultDraft(): ProfitFilterDraft {
     payment_provider: '',
     payment_method: '',
   }
+}
+
+function createCostRatioRuleId() {
+  return `${Date.now()}-${Math.random().toString(36).slice(2)}`
+}
+
+function normalizeCostRatioConfig(
+  config?: ProfitCostRatioConfig | null
+): ProfitCostRatioConfig {
+  return {
+    default_ratio:
+      typeof config?.default_ratio === 'number' ? config.default_ratio : null,
+    provider_ratios: { ...(config?.provider_ratios ?? {}) },
+    channel_ratios: { ...(config?.channel_ratios ?? {}) },
+    model_ratios: { ...(config?.model_ratios ?? {}) },
+    provider_model_ratios: { ...(config?.provider_model_ratios ?? {}) },
+    channel_model_ratios: { ...(config?.channel_model_ratios ?? {}) },
+  }
+}
+
+function splitCostRatioCompositeKey(key: string) {
+  const [target = '', model = ''] = key.split('|')
+  return { target, model }
+}
+
+function formatRatioDraftValue(value: number | null | undefined) {
+  if (value == null || Number.isNaN(value)) return ''
+  return String(value)
+}
+
+function costRatioConfigToDraft(config?: ProfitCostRatioConfig | null) {
+  const normalized = normalizeCostRatioConfig(config)
+  const rules: CostRatioRuleDraft[] = []
+
+  Object.entries(normalized.provider_ratios).forEach(([provider, ratio]) => {
+    rules.push({
+      id: createCostRatioRuleId(),
+      scope: 'provider',
+      provider,
+      channel_id: '',
+      model_name: '',
+      ratio: formatRatioDraftValue(ratio),
+    })
+  })
+  Object.entries(normalized.channel_ratios).forEach(([channelId, ratio]) => {
+    rules.push({
+      id: createCostRatioRuleId(),
+      scope: 'channel',
+      provider: '',
+      channel_id: channelId,
+      model_name: '',
+      ratio: formatRatioDraftValue(ratio),
+    })
+  })
+  Object.entries(normalized.model_ratios).forEach(([modelName, ratio]) => {
+    rules.push({
+      id: createCostRatioRuleId(),
+      scope: 'model',
+      provider: '',
+      channel_id: '',
+      model_name: modelName,
+      ratio: formatRatioDraftValue(ratio),
+    })
+  })
+  Object.entries(normalized.provider_model_ratios).forEach(([key, ratio]) => {
+    const { target, model } = splitCostRatioCompositeKey(key)
+    rules.push({
+      id: createCostRatioRuleId(),
+      scope: 'provider_model',
+      provider: target,
+      channel_id: '',
+      model_name: model,
+      ratio: formatRatioDraftValue(ratio),
+    })
+  })
+  Object.entries(normalized.channel_model_ratios).forEach(([key, ratio]) => {
+    const { target, model } = splitCostRatioCompositeKey(key)
+    rules.push({
+      id: createCostRatioRuleId(),
+      scope: 'channel_model',
+      provider: '',
+      channel_id: target,
+      model_name: model,
+      ratio: formatRatioDraftValue(ratio),
+    })
+  })
+
+  return {
+    default_ratio: formatRatioDraftValue(normalized.default_ratio),
+    rules,
+  }
+}
+
+function sortRecord(record: Record<string, number>) {
+  return Object.fromEntries(
+    Object.entries(record).sort(([a], [b]) => a.localeCompare(b))
+  )
+}
+
+function stableCostRatioConfig(config: ProfitCostRatioConfig) {
+  const normalized = normalizeCostRatioConfig(config)
+  return JSON.stringify({
+    default_ratio: normalized.default_ratio ?? null,
+    provider_ratios: sortRecord(normalized.provider_ratios),
+    channel_ratios: sortRecord(normalized.channel_ratios),
+    model_ratios: sortRecord(normalized.model_ratios),
+    provider_model_ratios: sortRecord(normalized.provider_model_ratios),
+    channel_model_ratios: sortRecord(normalized.channel_model_ratios),
+  })
+}
+
+function parseCostRatio(value: string) {
+  const trimmed = value.trim()
+  if (!trimmed) return null
+  const ratio = Number(trimmed)
+  if (!Number.isFinite(ratio) || ratio < 0 || ratio > 100) return undefined
+  return ratio
+}
+
+function isRuleEmpty(rule: CostRatioRuleDraft) {
+  return (
+    !rule.provider.trim() &&
+    !rule.channel_id.trim() &&
+    !rule.model_name.trim() &&
+    !rule.ratio.trim()
+  )
+}
+
+function costRatioDraftToConfig(
+  draft: CostRatioDraft,
+  t: (key: string) => string
+):
+  | { config: ProfitCostRatioConfig; error: null }
+  | { config: null; error: string } {
+  const defaultRatio = parseCostRatio(draft.default_ratio)
+  if (defaultRatio === undefined) {
+    return { config: null, error: t('Default cost ratio must be between 0 and 100') }
+  }
+
+  const config: ProfitCostRatioConfig = normalizeCostRatioConfig({
+    ...EMPTY_COST_RATIO_CONFIG,
+    default_ratio: defaultRatio,
+  })
+
+  for (const rule of draft.rules) {
+    if (isRuleEmpty(rule)) continue
+
+    const ratio = parseCostRatio(rule.ratio)
+    if (ratio === null) {
+      return { config: null, error: t('Cost ratio is required') }
+    }
+    if (ratio === undefined) {
+      return { config: null, error: t('Cost ratio must be between 0 and 100') }
+    }
+
+    const provider = rule.provider.trim()
+    const channelId = rule.channel_id.trim()
+    const modelName = rule.model_name.trim().toLowerCase()
+
+    if (rule.scope === 'provider') {
+      if (!provider) return { config: null, error: t('Provider is required') }
+      config.provider_ratios[provider] = ratio
+    } else if (rule.scope === 'channel') {
+      if (!channelId) return { config: null, error: t('Channel ID is required') }
+      config.channel_ratios[channelId] = ratio
+    } else if (rule.scope === 'model') {
+      if (!modelName) return { config: null, error: t('Model is required') }
+      config.model_ratios[modelName] = ratio
+    } else if (rule.scope === 'provider_model') {
+      if (!provider || !modelName) {
+        return { config: null, error: t('Provider and model are required') }
+      }
+      config.provider_model_ratios[`${provider}|${modelName}`] = ratio
+    } else if (rule.scope === 'channel_model') {
+      if (!channelId || !modelName) {
+        return { config: null, error: t('Channel ID and model are required') }
+      }
+      config.channel_model_ratios[`${channelId}|${modelName}`] = ratio
+    }
+  }
+
+  return { config, error: null }
 }
 
 function toQueryParams(draft: ProfitFilterDraft): ProfitQueryParams {
@@ -323,7 +557,7 @@ function SummaryCards(props: { data: ProfitOverview; loading: boolean }) {
     {
       title: t('Estimated Cost'),
       value: formatUsd(summary.estimated_cost_usd),
-      desc: t('After group ratio'),
+      desc: t('Configured or estimated upstream cost'),
       icon: Coins,
       tone: 'warning' as const,
     },
@@ -644,6 +878,313 @@ function FilterBar(props: {
   )
 }
 
+function CostRatioConfigPanel(props: {
+  draft: CostRatioDraft
+  error: string | null
+  loading: boolean
+  previewing: boolean
+  saving: boolean
+  hasChanges: boolean
+  onDraftChange: (draft: CostRatioDraft) => void
+  onSave: () => void
+  onReset: () => void
+}) {
+  const { t } = useTranslation()
+  const {
+    draft,
+    error,
+    hasChanges,
+    loading,
+    onDraftChange,
+    onReset,
+    onSave,
+    previewing,
+    saving,
+  } = props
+
+  const updateDraft = useCallback(
+    (patch: Partial<CostRatioDraft>) => {
+      onDraftChange({ ...draft, ...patch })
+    },
+    [draft, onDraftChange]
+  )
+
+  const updateRule = useCallback(
+    (id: string, patch: Partial<CostRatioRuleDraft>) => {
+      updateDraft({
+        rules: draft.rules.map((rule) =>
+          rule.id === id ? { ...rule, ...patch } : rule
+        ),
+      })
+    },
+    [draft.rules, updateDraft]
+  )
+
+  const addRule = useCallback(() => {
+    updateDraft({
+      rules: [
+        ...draft.rules,
+        {
+          id: createCostRatioRuleId(),
+          scope: 'provider',
+          provider: '',
+          channel_id: '',
+          model_name: '',
+          ratio: '',
+        },
+      ],
+    })
+  }, [draft.rules, updateDraft])
+
+  const removeRule = useCallback(
+    (id: string) => {
+      updateDraft({ rules: draft.rules.filter((rule) => rule.id !== id) })
+    },
+    [draft.rules, updateDraft]
+  )
+
+  const changeRuleScope = useCallback(
+    (id: string, scope: CostRatioRuleScope) => {
+      updateRule(id, {
+        scope,
+        provider: '',
+        channel_id: '',
+        model_name: '',
+      })
+    },
+    [updateRule]
+  )
+
+  const ruleCount = draft.rules.filter((rule) => !isRuleEmpty(rule)).length
+
+  return (
+    <ProfitPanel
+      title={
+        <span className='inline-flex items-center gap-2'>
+          <Calculator className='text-muted-foreground/70 size-4' />
+          {t('Upstream Cost Ratios')}
+        </span>
+      }
+      description={t('Root-only cost model for profit estimation')}
+    >
+      <div className='space-y-3'>
+        <div className='grid gap-2 md:grid-cols-[minmax(0,16rem)_1fr_auto] md:items-end'>
+          <div className='grid gap-1.5'>
+            <Label className='text-xs' htmlFor='profit-default-cost-ratio'>
+              {t('Default Cost Ratio')}
+            </Label>
+            <Input
+              id='profit-default-cost-ratio'
+              inputMode='decimal'
+              placeholder={t('Fallback to log ratio')}
+              value={draft.default_ratio}
+              onChange={(event) =>
+                updateDraft({ default_ratio: event.target.value })
+              }
+              disabled={loading}
+            />
+          </div>
+          <div className='flex min-w-0 flex-wrap items-center gap-1.5'>
+            <Badge variant={hasChanges ? 'secondary' : 'outline'}>
+              {hasChanges ? t('Previewing draft') : t('Using saved ratios')}
+            </Badge>
+            {previewing && <Badge variant='outline'>{t('Recalculating')}</Badge>}
+            {ruleCount > 0 && (
+              <Badge variant='outline'>
+                {t('{{count}} cost rules', { count: ruleCount })}
+              </Badge>
+            )}
+            {error && (
+              <Badge variant='destructive' className='max-w-full'>
+                <span className='truncate'>{error}</span>
+              </Badge>
+            )}
+          </div>
+          <div className='flex items-center gap-2'>
+            <Button
+              type='button'
+              variant='outline'
+              onClick={onReset}
+              disabled={loading || saving || !hasChanges}
+            >
+              {t('Reset')}
+            </Button>
+            <Button
+              type='button'
+              onClick={onSave}
+              disabled={loading || saving || !!error || !hasChanges}
+            >
+              <Save data-icon='inline-start' />
+              {saving ? t('Saving...') : t('Save Ratios')}
+            </Button>
+          </div>
+        </div>
+
+        <div className='overflow-x-auto rounded-lg border'>
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead className='min-w-36'>{t('Scope')}</TableHead>
+                <TableHead className='min-w-36'>{t('Provider')}</TableHead>
+                <TableHead className='min-w-32'>{t('Channel ID')}</TableHead>
+                <TableHead className='min-w-48'>{t('Model')}</TableHead>
+                <TableHead className='min-w-32 text-right'>
+                  {t('Cost Ratio')}
+                </TableHead>
+                <TableHead className='w-12 text-right'>{t('Action')}</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {draft.rules.length === 0 ? (
+                <TableRow>
+                  <TableCell
+                    colSpan={6}
+                    className='text-muted-foreground h-20 text-center'
+                  >
+                    {t('No cost ratio rules')}
+                  </TableCell>
+                </TableRow>
+              ) : (
+                draft.rules.map((rule) => {
+                  const needsProvider =
+                    rule.scope === 'provider' ||
+                    rule.scope === 'provider_model'
+                  const needsChannel =
+                    rule.scope === 'channel' ||
+                    rule.scope === 'channel_model'
+                  const needsModel =
+                    rule.scope === 'model' ||
+                    rule.scope === 'provider_model' ||
+                    rule.scope === 'channel_model'
+
+                  return (
+                    <TableRow key={rule.id}>
+                      <TableCell>
+                        <NativeSelect
+                          size='sm'
+                          className='w-full'
+                          value={rule.scope}
+                          onChange={(event) =>
+                            changeRuleScope(
+                              rule.id,
+                              event.target.value as CostRatioRuleScope
+                            )
+                          }
+                          disabled={loading}
+                        >
+                          {COST_RATIO_SCOPES.map((scope) => (
+                            <NativeSelectOption
+                              key={scope.value}
+                              value={scope.value}
+                            >
+                              {t(scope.label)}
+                            </NativeSelectOption>
+                          ))}
+                        </NativeSelect>
+                      </TableCell>
+                      <TableCell>
+                        <NativeSelect
+                          size='sm'
+                          className='w-full'
+                          value={rule.provider}
+                          onChange={(event) =>
+                            updateRule(rule.id, {
+                              provider: event.target.value,
+                            })
+                          }
+                          disabled={loading || !needsProvider}
+                        >
+                          {CHANNEL_PROVIDERS.map((item) => (
+                            <NativeSelectOption
+                              key={item.value}
+                              value={item.value}
+                            >
+                              {t(item.label)}
+                            </NativeSelectOption>
+                          ))}
+                        </NativeSelect>
+                      </TableCell>
+                      <TableCell>
+                        <Input
+                          inputMode='numeric'
+                          value={rule.channel_id}
+                          placeholder={t('Channel ID')}
+                          onChange={(event) =>
+                            updateRule(rule.id, {
+                              channel_id: event.target.value,
+                            })
+                          }
+                          disabled={loading || !needsChannel}
+                        />
+                      </TableCell>
+                      <TableCell>
+                        <Input
+                          value={rule.model_name}
+                          placeholder={t('Model')}
+                          onChange={(event) =>
+                            updateRule(rule.id, {
+                              model_name: event.target.value,
+                            })
+                          }
+                          disabled={loading || !needsModel}
+                        />
+                      </TableCell>
+                      <TableCell>
+                        <Input
+                          className='text-right font-mono'
+                          inputMode='decimal'
+                          value={rule.ratio}
+                          placeholder='0.42'
+                          onChange={(event) =>
+                            updateRule(rule.id, {
+                              ratio: event.target.value,
+                            })
+                          }
+                          disabled={loading}
+                        />
+                      </TableCell>
+                      <TableCell className='text-right'>
+                        <Button
+                          type='button'
+                          variant='ghost'
+                          size='icon-sm'
+                          aria-label={t('Delete')}
+                          onClick={() => removeRule(rule.id)}
+                          disabled={loading}
+                        >
+                          <Trash2 className='size-4' />
+                        </Button>
+                      </TableCell>
+                    </TableRow>
+                  )
+                })
+              )}
+            </TableBody>
+          </Table>
+        </div>
+
+        <div className='flex flex-wrap items-center justify-between gap-2'>
+          <div className='text-muted-foreground text-xs'>
+            {t('Cost priority')}: {t('Channel + Model')} &gt;{' '}
+            {t('Channel')} &gt; {t('Provider + Model')} &gt; {t('Provider')}{' '}
+            &gt; {t('Model')} &gt; {t('Default Cost Ratio')}
+          </div>
+          <Button
+            type='button'
+            variant='outline'
+            size='sm'
+            onClick={addRule}
+            disabled={loading}
+          >
+            <Plus data-icon='inline-start' />
+            {t('Add Cost Rule')}
+          </Button>
+        </div>
+      </div>
+    </ProfitPanel>
+  )
+}
+
 function TrendRows(props: { trends: ProfitTrendItem[]; loading: boolean }) {
   const { t } = useTranslation()
   const items = useMemo(
@@ -834,6 +1375,7 @@ function ModelTable(props: { models: ProfitModelItem[]; loading: boolean }) {
       <TableHeader>
         <TableRow>
           <TableHead>{t('Model')}</TableHead>
+          <TableHead className='text-right'>{t('Cost Ratio')}</TableHead>
           <TableHead className='text-right'>{t('Revenue')}</TableHead>
           <TableHead className='text-right'>{t('Estimated Cost')}</TableHead>
           <TableHead className='text-right'>{t('Profit')}</TableHead>
@@ -845,7 +1387,7 @@ function ModelTable(props: { models: ProfitModelItem[]; loading: boolean }) {
       <TableBody>
         {models.length === 0 ? (
           <TableRow>
-            <TableCell colSpan={7} className='text-muted-foreground h-32 text-center'>
+            <TableCell colSpan={8} className='text-muted-foreground h-32 text-center'>
               {t('No data available')}
             </TableCell>
           </TableRow>
@@ -856,6 +1398,9 @@ function ModelTable(props: { models: ProfitModelItem[]; loading: boolean }) {
                 <span className='truncate font-mono' title={model.model_name}>
                   {model.model_name}
                 </span>
+              </TableCell>
+              <TableCell className='text-right font-mono'>
+                {formatCostRatio(model.cost_ratio)}
               </TableCell>
               <TableCell className='text-right font-mono'>
                 {formatUsd(model.revenue_usd)}
@@ -941,11 +1486,15 @@ function TopUpTable(props: { topups: ProfitTopUpItem[]; loading: boolean }) {
 
 export function ProfitVisualization() {
   const { t } = useTranslation()
+  const queryClient = useQueryClient()
   const [draft, setDraft] = useState<ProfitFilterDraft>(() =>
     createDefaultDraft()
   )
   const [filters, setFilters] = useState<ProfitQueryParams>(() =>
     toQueryParams(createDefaultDraft())
+  )
+  const [costRatioDraft, setCostRatioDraft] = useState<CostRatioDraft>(() =>
+    costRatioConfigToDraft(EMPTY_COST_RATIO_CONFIG)
   )
 
   const profitQuery = useQuery({
@@ -954,12 +1503,95 @@ export function ProfitVisualization() {
     staleTime: 30 * 1000,
   })
 
-  const overview =
+  const costConfigQuery = useQuery({
+    queryKey: ['profit-cost-ratio-config'],
+    queryFn: getProfitCostRatioConfig,
+    staleTime: 5 * 60 * 1000,
+  })
+
+  const savedCostRatioConfig = useMemo(() => {
+    if (costConfigQuery.data?.success && costConfigQuery.data.data) {
+      return normalizeCostRatioConfig(costConfigQuery.data.data)
+    }
+    return normalizeCostRatioConfig(EMPTY_COST_RATIO_CONFIG)
+  }, [costConfigQuery.data])
+
+  useEffect(() => {
+    if (costConfigQuery.data?.success && costConfigQuery.data.data) {
+      setCostRatioDraft(costRatioConfigToDraft(costConfigQuery.data.data))
+    }
+  }, [costConfigQuery.data])
+
+  const draftCostRatioConfig = useMemo(
+    () => costRatioDraftToConfig(costRatioDraft, t),
+    [costRatioDraft, t]
+  )
+  const savedCostRatioKey = useMemo(
+    () => stableCostRatioConfig(savedCostRatioConfig),
+    [savedCostRatioConfig]
+  )
+  const draftCostRatioKey = useMemo(
+    () =>
+      draftCostRatioConfig.config
+        ? stableCostRatioConfig(draftCostRatioConfig.config)
+        : null,
+    [draftCostRatioConfig.config]
+  )
+  const hasCostRatioChanges =
+    draftCostRatioKey != null && draftCostRatioKey !== savedCostRatioKey
+  const hasCostRatioDraftDirty =
+    hasCostRatioChanges || draftCostRatioConfig.error != null
+
+  const previewRequest = useMemo(() => {
+    if (!hasCostRatioChanges || !draftCostRatioConfig.config) return null
+    return {
+      ...filters,
+      cost_ratio_config: draftCostRatioConfig.config,
+    }
+  }, [draftCostRatioConfig.config, filters, hasCostRatioChanges])
+  const debouncedPreviewRequest = useDebounce(previewRequest, 450)
+
+  const previewQuery = useQuery({
+    queryKey: ['profit-overview-preview', debouncedPreviewRequest],
+    queryFn: () => previewProfitOverview(debouncedPreviewRequest!),
+    enabled: debouncedPreviewRequest != null,
+    staleTime: 10 * 1000,
+  })
+
+  const saveCostRatioMutation = useMutation({
+    mutationFn: updateProfitCostRatioConfig,
+    onSuccess: (data) => {
+      if (data.success && data.data) {
+        queryClient.setQueryData(['profit-cost-ratio-config'], data)
+        queryClient.invalidateQueries({ queryKey: ['profit-overview'] })
+        queryClient.invalidateQueries({ queryKey: ['profit-overview-preview'] })
+        toast.success(t('Cost ratios saved'))
+      } else {
+        toast.error(data.message || t('Failed to save cost ratios'))
+      }
+    },
+    onError: (error: Error) => {
+      toast.error(error.message || t('Failed to save cost ratios'))
+    },
+  })
+
+  const savedOverview =
     profitQuery.data?.success && profitQuery.data.data
       ? profitQuery.data.data
       : EMPTY_OVERVIEW
-  const loading = profitQuery.isLoading
-  const hasError = profitQuery.isError || profitQuery.data?.success === false
+  const previewOverview =
+    hasCostRatioChanges && previewQuery.data?.success && previewQuery.data.data
+      ? previewQuery.data.data
+      : null
+  const overview = previewOverview ?? savedOverview
+  const loading = profitQuery.isLoading || costConfigQuery.isLoading
+  const hasError =
+    profitQuery.isError ||
+    costConfigQuery.isError ||
+    profitQuery.data?.success === false ||
+    costConfigQuery.data?.success === false ||
+    (hasCostRatioChanges && previewQuery.isError) ||
+    (hasCostRatioChanges && previewQuery.data?.success === false)
   const displayStartTimestamp =
     overview.summary.start_timestamp || filters.start_timestamp
   const displayEndTimestamp =
@@ -974,6 +1606,18 @@ export function ProfitVisualization() {
     setDraft(next)
     setFilters(toQueryParams(next))
   }, [])
+
+  const handleSaveCostRatios = useCallback(() => {
+    if (!draftCostRatioConfig.config) {
+      toast.error(draftCostRatioConfig.error || t('Invalid cost ratio rules'))
+      return
+    }
+    saveCostRatioMutation.mutate(draftCostRatioConfig.config)
+  }, [draftCostRatioConfig, saveCostRatioMutation, t])
+
+  const handleResetCostRatios = useCallback(() => {
+    setCostRatioDraft(costRatioConfigToDraft(savedCostRatioConfig))
+  }, [savedCostRatioConfig])
 
   return (
     <SectionPageLayout>
@@ -994,9 +1638,29 @@ export function ProfitVisualization() {
             />
           </FadeIn>
 
+          <FadeIn delay={0.03}>
+            <CostRatioConfigPanel
+              draft={costRatioDraft}
+              error={draftCostRatioConfig.error}
+              loading={costConfigQuery.isLoading}
+              previewing={
+                hasCostRatioChanges &&
+                (previewQuery.isLoading || previewQuery.isFetching)
+              }
+              saving={saveCostRatioMutation.isPending}
+              hasChanges={hasCostRatioDraftDirty}
+              onDraftChange={setCostRatioDraft}
+              onSave={handleSaveCostRatios}
+              onReset={handleResetCostRatios}
+            />
+          </FadeIn>
+
           {hasError && (
             <div className='border-destructive/40 bg-destructive/5 text-destructive rounded-lg border px-3 py-2 text-sm'>
-              {profitQuery.data?.message || t('Failed to load profit data')}
+              {profitQuery.data?.message ||
+                costConfigQuery.data?.message ||
+                previewQuery.data?.message ||
+                t('Failed to load profit data')}
             </div>
           )}
 
@@ -1063,6 +1727,9 @@ export function ProfitVisualization() {
               </span>
               <span>
                 {t('Average Top-up')}: {formatAmount(overview.summary.avg_topup_amount)}
+              </span>
+              <span>
+                {t('Cost Ratio')}: {formatCostRatio(overview.summary.cost_ratio)}
               </span>
               <span>
                 {t('Top-up Count')}: {formatNumber(overview.summary.topup_count)}

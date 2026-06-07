@@ -17,11 +17,42 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import { api } from '@/lib/api'
-import type { ProfitOverviewResponse, ProfitQueryParams } from './types'
+import type {
+  ProfitCostRatioConfig,
+  ProfitCostRatioConfigResponse,
+  ProfitOverviewResponse,
+  ProfitPreviewRequest,
+  ProfitQueryParams,
+} from './types'
 
 export async function getProfitOverview(params: ProfitQueryParams) {
   const res = await api.get<ProfitOverviewResponse>('/api/profit/summary', {
     params,
   })
+  return res.data
+}
+
+export async function previewProfitOverview(request: ProfitPreviewRequest) {
+  const res = await api.post<ProfitOverviewResponse>(
+    '/api/profit/summary/preview',
+    request
+  )
+  return res.data
+}
+
+export async function getProfitCostRatioConfig() {
+  const res = await api.get<ProfitCostRatioConfigResponse>(
+    '/api/profit/cost-ratio-config'
+  )
+  return res.data
+}
+
+export async function updateProfitCostRatioConfig(
+  config: ProfitCostRatioConfig
+) {
+  const res = await api.put<ProfitCostRatioConfigResponse>(
+    '/api/profit/cost-ratio-config',
+    config
+  )
   return res.data
 }

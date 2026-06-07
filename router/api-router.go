@@ -343,6 +343,9 @@ func SetApiRouter(router *gin.Engine) {
 		profitRoute.Use(middleware.RootAuth())
 		{
 			profitRoute.GET("/summary", controller.GetProfitSummary)
+			profitRoute.POST("/summary/preview", controller.PreviewProfitSummary)
+			profitRoute.GET("/cost-ratio-config", controller.GetProfitCostRatioConfig)
+			profitRoute.PUT("/cost-ratio-config", controller.UpdateProfitCostRatioConfig)
 		}
 
 		logRoute.Use(middleware.CORS(), middleware.CriticalRateLimit())
