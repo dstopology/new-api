@@ -339,6 +339,12 @@ func SetApiRouter(router *gin.Engine) {
 		dataRoute.GET("/topups", middleware.AdminAuth(), controller.GetTopUpAnalysisData)
 		dataRoute.GET("/self", middleware.UserAuth(), controller.GetUserQuotaDates)
 
+		profitRoute := apiRouter.Group("/profit")
+		profitRoute.Use(middleware.RootAuth())
+		{
+			profitRoute.GET("/summary", controller.GetProfitSummary)
+		}
+
 		logRoute.Use(middleware.CORS(), middleware.CriticalRateLimit())
 		{
 			logRoute.GET("/token", middleware.TokenAuthReadOnly(), controller.GetLogByKey)

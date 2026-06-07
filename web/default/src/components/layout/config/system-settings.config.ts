@@ -21,6 +21,7 @@ import {
   Box,
   CreditCard,
   Layout,
+  LineChart,
   Settings,
   Shield,
   ShieldAlert,
@@ -77,6 +78,11 @@ function getSystemSettingsNavGroups(t: TFunction): NavGroup[] {
           title: t('Console Content'),
           icon: Layout,
           items: getContentSectionNavItems(t),
+        },
+        {
+          title: t('Profit Visualization'),
+          icon: LineChart,
+          url: '/system-settings/profit',
         },
         {
           title: t('Operations'),
