@@ -188,6 +188,72 @@ func normalizeProfitCompositeKey(raw string, idNormalizer func(string) string) s
 	return idKey + "|" + modelKey
 }
 
+func profitModelRuleMatches(ruleModel string, logModel string) bool {
+	if ruleModel == "" || logModel == "" {
+		return false
+	}
+	if ruleModel == logModel {
+		return true
+	}
+	if strings.HasSuffix(ruleModel, "*") {
+		prefix := strings.TrimSuffix(ruleModel, "*")
+		return prefix != "" && strings.HasPrefix(logModel, prefix)
+	}
+	if !strings.HasPrefix(logModel, ruleModel) || len(logModel) <= len(ruleModel) {
+		return false
+	}
+	switch logModel[len(ruleModel)] {
+	case '-', '_', ':', '/':
+		return true
+	default:
+		return false
+	}
+}
+
+func lookupProfitModelRatio(ratios map[string]float64, modelKey string) (float64, bool) {
+	if ratio, ok := ratios[modelKey]; ok {
+		return ratio, true
+	}
+
+	bestRuleLength := -1
+	bestRatio := 0.0
+	for ruleModel, ratio := range ratios {
+		if !profitModelRuleMatches(ruleModel, modelKey) {
+			continue
+		}
+		ruleLength := len(strings.TrimSuffix(ruleModel, "*"))
+		if ruleLength > bestRuleLength {
+			bestRuleLength = ruleLength
+			bestRatio = ratio
+		}
+	}
+	return bestRatio, bestRuleLength >= 0
+}
+
+func lookupProfitCompositeModelRatio(ratios map[string]float64, targetKey string, modelKey string) (float64, bool) {
+	if ratio, ok := ratios[targetKey+"|"+modelKey]; ok {
+		return ratio, true
+	}
+
+	bestRuleLength := -1
+	bestRatio := 0.0
+	for key, ratio := range ratios {
+		parts := strings.SplitN(key, "|", 2)
+		if len(parts) != 2 || parts[0] != targetKey {
+			continue
+		}
+		if !profitModelRuleMatches(parts[1], modelKey) {
+			continue
+		}
+		ruleLength := len(strings.TrimSuffix(parts[1], "*"))
+		if ruleLength > bestRuleLength {
+			bestRuleLength = ruleLength
+			bestRatio = ratio
+		}
+	}
+	return bestRatio, bestRuleLength >= 0
+}
+
 func isValidProfitCostRatio(ratio float64) bool {
 	return !math.IsNaN(ratio) && !math.IsInf(ratio, 0) && ratio >= 0 && ratio <= profitCostRatioMax
 }
@@ -282,7 +348,7 @@ func lookupProfitCostRatio(config ProfitCostRatioConfig, channelID int, channelT
 	modelKey := normalizeProfitModelKey(modelName)
 
 	if channelID > 0 && modelKey != "" {
-		if ratio, ok := config.ChannelModelRatios[channelKey+"|"+modelKey]; ok {
+		if ratio, ok := lookupProfitCompositeModelRatio(config.ChannelModelRatios, channelKey, modelKey); ok {
 			return ratio, true
 		}
 	}
@@ -292,7 +358,7 @@ func lookupProfitCostRatio(config ProfitCostRatioConfig, channelID int, channelT
 		}
 	}
 	if channelType > 0 && modelKey != "" {
-		if ratio, ok := config.ProviderModelRatios[providerKey+"|"+modelKey]; ok {
+		if ratio, ok := lookupProfitCompositeModelRatio(config.ProviderModelRatios, providerKey, modelKey); ok {
 			return ratio, true
 		}
 	}
@@ -302,7 +368,7 @@ func lookupProfitCostRatio(config ProfitCostRatioConfig, channelID int, channelT
 		}
 	}
 	if modelKey != "" {
-		if ratio, ok := config.ModelRatios[modelKey]; ok {
+		if ratio, ok := lookupProfitModelRatio(config.ModelRatios, modelKey); ok {
 			return ratio, true
 		}
 	}

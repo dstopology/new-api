@@ -154,7 +154,7 @@ func TestGetProfitOverviewUsesConfiguredCostRatio(t *testing.T) {
 		CreatedAt:        1700000000,
 		Type:             LogTypeConsume,
 		ChannelId:        901,
-		ModelName:        "gpt-special",
+		ModelName:        "gpt-special-2026",
 		Group:            "vip",
 		Quota:            1000,
 		PromptTokens:     120,
@@ -197,4 +197,29 @@ func TestGetProfitOverviewUsesConfiguredCostRatio(t *testing.T) {
 	assert.InDelta(t, 0.2, overview.Channels[0].CostRatio, 0.0001)
 	require.Len(t, overview.Models, 1)
 	assert.InDelta(t, 0.2, overview.Models[0].CostRatio, 0.0001)
+}
+
+func TestLookupProfitCostRatioMatchesModelVariants(t *testing.T) {
+	config := ProfitCostRatioConfig{
+		ModelRatios: map[string]float64{
+			"gpt-5.5":       0.31,
+			"gpt-5.5-pro":   0.22,
+			"gpt-5.5-fast*": 0.18,
+		},
+	}
+
+	ratio, ok := lookupProfitCostRatio(config, 0, 0, "gpt-5.5-2026")
+	require.True(t, ok)
+	assert.InDelta(t, 0.31, ratio, 0.0001)
+
+	ratio, ok = lookupProfitCostRatio(config, 0, 0, "gpt-5.5-pro-2026")
+	require.True(t, ok)
+	assert.InDelta(t, 0.22, ratio, 0.0001)
+
+	ratio, ok = lookupProfitCostRatio(config, 0, 0, "gpt-5.5-fast-preview")
+	require.True(t, ok)
+	assert.InDelta(t, 0.18, ratio, 0.0001)
+
+	_, ok = lookupProfitCostRatio(config, 0, 0, "gpt-5.5mini")
+	require.False(t, ok)
 }
