@@ -33,6 +33,8 @@ import { getModelsSectionNavItems } from '@/features/system-settings/models/sect
 import { getOperationsSectionNavItems } from '@/features/system-settings/operations/section-registry.tsx'
 import { getSecuritySectionNavItems } from '@/features/system-settings/security/section-registry.tsx'
 import { getSiteSectionNavItems } from '@/features/system-settings/site/section-registry.tsx'
+import type { AuthUser } from '@/stores/auth-store'
+import { canAccessSecuritySettings } from '@/lib/security-settings-access'
 import type { NavGroup, SidebarView } from '../types'
 
 /**
@@ -42,7 +44,12 @@ import type { NavGroup, SidebarView } from '../types'
  * header already provides top-level context — the inner group label
  * scopes the items as "administration" actions.
  */
-function getSystemSettingsNavGroups(t: TFunction): NavGroup[] {
+function getSystemSettingsNavGroups(
+  t: TFunction,
+  user?: AuthUser | null
+): NavGroup[] {
+  const canViewSecuritySettings = canAccessSecuritySettings(user)
+
   return [
     {
       id: 'system-administration',
@@ -68,11 +75,15 @@ function getSystemSettingsNavGroups(t: TFunction): NavGroup[] {
           icon: Box,
           items: getModelsSectionNavItems(t),
         },
-        {
-          title: t('Security & Limits'),
-          icon: ShieldAlert,
-          items: getSecuritySectionNavItems(t),
-        },
+        ...(canViewSecuritySettings
+          ? [
+              {
+                title: t('Security & Limits'),
+                icon: ShieldAlert,
+                items: getSecuritySectionNavItems(t),
+              },
+            ]
+          : []),
         {
           title: t('Console Content'),
           icon: Layout,

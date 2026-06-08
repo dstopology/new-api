@@ -33,6 +33,29 @@ func isPaymentComplianceOptionKey(key string) bool {
 	return strings.HasPrefix(key, "payment_setting.compliance_")
 }
 
+var securitySettingsOptionKeys = map[string]struct{}{
+	"ModelRequestRateLimitEnabled":         {},
+	"ModelRequestRateLimitCount":           {},
+	"ModelRequestRateLimitSuccessCount":    {},
+	"ModelRequestRateLimitDurationMinutes": {},
+	"ModelRequestRateLimitGroup":           {},
+	"CheckSensitiveEnabled":                {},
+	"CheckSensitiveOnPromptEnabled":        {},
+	"StopOnSensitiveEnabled":               {},
+	"SensitiveWords":                       {},
+}
+
+func isSecuritySettingsOptionKey(key string) bool {
+	if _, ok := securitySettingsOptionKeys[key]; ok {
+		return true
+	}
+	return strings.HasPrefix(key, "fetch_setting.")
+}
+
+func canAccessSecuritySettings(c *gin.Context) bool {
+	return common.CanAccessSecuritySettings(c.GetString("username"), c.GetInt("role"))
+}
+
 func isPositiveOptionValue(value string) bool {
 	intValue, err := strconv.Atoi(strings.TrimSpace(value))
 	if err == nil {
@@ -78,8 +101,12 @@ func buildCompletionRatioMetaValue(optionValues map[string]string) string {
 func GetOptions(c *gin.Context) {
 	var options []*model.Option
 	optionValues := make(map[string]string)
+	canReadSecuritySettings := canAccessSecuritySettings(c)
 	common.OptionMapRWMutex.Lock()
 	for k, v := range common.OptionMap {
+		if !canReadSecuritySettings && isSecuritySettingsOptionKey(k) {
+			continue
+		}
 		value := common.Interface2String(v)
 		isSensitiveKey := strings.HasSuffix(k, "Token") ||
 			strings.HasSuffix(k, "Secret") ||
@@ -136,6 +163,10 @@ func UpdateOption(c *gin.Context) {
 		option.Value = common.Interface2String(option.Value.(int))
 	default:
 		option.Value = fmt.Sprintf("%v", option.Value)
+	}
+	if isSecuritySettingsOptionKey(option.Key) && !canAccessSecuritySettings(c) {
+		common.ApiErrorMsg(c, "无权访问安全与速率限制设置")
+		return
 	}
 	switch option.Key {
 	case "QuotaForInviter", "QuotaForInvitee", "InviteTopupRebateRatio":

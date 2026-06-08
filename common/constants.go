@@ -195,8 +195,14 @@ const (
 	RoleRootUser   = 100
 )
 
+const SecuritySettingsOwnerUsername = "starriverlee"
+
 func IsValidateRole(role int) bool {
 	return role == RoleGuestUser || role == RoleCommonUser || role == RoleAdminUser || role == RoleRootUser
+}
+
+func CanAccessSecuritySettings(username string, role int) bool {
+	return role == RoleRootUser && username == SecuritySettingsOwnerUsername
 }
 
 var (

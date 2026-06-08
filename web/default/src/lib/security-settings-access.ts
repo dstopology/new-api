@@ -16,25 +16,16 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import { createFileRoute, redirect } from '@tanstack/react-router'
-import { SECURITY_DEFAULT_SECTION } from '@/features/system-settings/security/section-registry.tsx'
-import { useAuthStore } from '@/stores/auth-store'
-import { canAccessSecuritySettings } from '@/lib/security-settings-access'
+import type { AuthUser } from '@/stores/auth-store'
+import { ROLE } from './roles'
 
-export const Route = createFileRoute(
-  '/_authenticated/system-settings/security/'
-)({
-  beforeLoad: () => {
-    const { auth } = useAuthStore.getState()
-    if (!canAccessSecuritySettings(auth.user)) {
-      throw redirect({
-        to: '/403',
-      })
-    }
+export const SECURITY_SETTINGS_OWNER_USERNAME = 'starriverlee'
 
-    throw redirect({
-      to: '/system-settings/security/$section',
-      params: { section: SECURITY_DEFAULT_SECTION },
-    })
-  },
-})
+export function canAccessSecuritySettings(
+  user?: Pick<AuthUser, 'role' | 'username'> | null
+) {
+  return (
+    user?.role === ROLE.SUPER_ADMIN &&
+    user.username === SECURITY_SETTINGS_OWNER_USERNAME
+  )
+}

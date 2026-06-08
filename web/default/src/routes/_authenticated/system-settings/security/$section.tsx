@@ -22,11 +22,20 @@ import {
   SECURITY_DEFAULT_SECTION,
   SECURITY_SECTION_IDS,
 } from '@/features/system-settings/security/section-registry.tsx'
+import { useAuthStore } from '@/stores/auth-store'
+import { canAccessSecuritySettings } from '@/lib/security-settings-access'
 
 export const Route = createFileRoute(
   '/_authenticated/system-settings/security/$section'
 )({
   beforeLoad: ({ params }) => {
+    const { auth } = useAuthStore.getState()
+    if (!canAccessSecuritySettings(auth.user)) {
+      throw redirect({
+        to: '/403',
+      })
+    }
+
     const validSections = SECURITY_SECTION_IDS as unknown as string[]
     if (!validSections.includes(params.section)) {
       throw redirect({
