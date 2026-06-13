@@ -15,8 +15,13 @@ import (
 
 const (
 	imageGenerationDisabledMessage = "image generation is disabled on this channel"
-	imageGenerationToolPrefix      = "image_generation"
-	imageGenerationDisabledNotice  = "This channel does not support image generation. Any image generation is not allowed. If the user asks to create or edit images, reply in text that image generation is not supported (暂不支持生图)."
+	// imageGenerationToolPrefix is matched against the tool type/name AFTER stripping
+	// separators (so image_gen, image-gen, imagegen, image_generation and
+	// image_generation_call all normalize to a string starting with "imagegen").
+	// Codex's built-in image tool is named "image_gen", OpenAI's Responses built-in
+	// is "image_generation" — both must be caught.
+	imageGenerationToolPrefix     = "imagegen"
+	imageGenerationDisabledNotice = "This channel does not support image generation. Any image generation is not allowed. If the user asks to create or edit images, reply in text that image generation is not supported (暂不支持生图)."
 )
 
 var blockedImageGenerationModelHints = []string{
@@ -502,7 +507,21 @@ func isImageGenerationToolDeclaration(value any) bool {
 	case string:
 		return isImageGenerationToolType(v)
 	case map[string]any:
-		return isImageGenerationToolType(appcommon.Interface2String(v["type"]))
+		// Built-in tool: {"type":"image_gen"} / {"type":"image_generation"}.
+		if isImageGenerationToolType(appcommon.Interface2String(v["type"])) {
+			return true
+		}
+		// Some clients declare it as a named/function tool:
+		// {"name":"image_gen"} or {"type":"function","function":{"name":"image_gen"}}.
+		if isImageGenerationToolType(appcommon.Interface2String(v["name"])) {
+			return true
+		}
+		if function, ok := v["function"].(map[string]any); ok {
+			if isImageGenerationToolType(appcommon.Interface2String(function["name"])) {
+				return true
+			}
+		}
+		return false
 	default:
 		return false
 	}
@@ -725,9 +744,14 @@ func rawValueHasImageOutputModality(value any) bool {
 	return false
 }
 
+var imageGenerationTokenReplacer = strings.NewReplacer("-", "", "_", "", " ", "")
+
 func isImageGenerationToolType(toolType string) bool {
-	toolType = strings.ToLower(strings.TrimSpace(toolType))
-	return strings.HasPrefix(toolType, imageGenerationToolPrefix)
+	normalized := imageGenerationTokenReplacer.Replace(strings.ToLower(strings.TrimSpace(toolType)))
+	if normalized == "" {
+		return false
+	}
+	return strings.HasPrefix(normalized, imageGenerationToolPrefix)
 }
 
 func isBlockedImageGenerationModel(modelName string) bool {

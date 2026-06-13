@@ -218,3 +218,41 @@ func TestPrepareImageGenerationDisabledJSONBodyStripsAlternateModalityKeys(t *te
 	require.Contains(t, string(prepared), `"response_modalities":["TEXT"]`)
 	require.Contains(t, string(prepared), "暂不支持生图")
 }
+
+func TestPrepareImageGenerationDisabledJSONBodyStripsCodexImageGenTool(t *testing.T) {
+	// Codex's built-in image tool is named "image_gen" (not "image_generation").
+	// The matcher must normalize separators so this variant is also stripped.
+	body := []byte(`{
+		"model":"gpt-5-codex",
+		"instructions":"help the user",
+		"tools":[
+			{"type":"image_gen"},
+			{"type":"web_search"}
+		]
+	}`)
+
+	prepared, err := PrepareImageGenerationDisabledJSONBody(body)
+	require.Nil(t, err)
+	require.NotContains(t, string(prepared), "image_gen")
+	require.Contains(t, string(prepared), `"type":"web_search"`)
+	require.Contains(t, string(prepared), "暂不支持生图")
+}
+
+func TestPrepareImageGenerationDisabledJSONBodyStripsFunctionFormImageGen(t *testing.T) {
+	// A client may declare image generation as a named function tool rather than a
+	// built-in type; it must still be stripped.
+	body := []byte(`{
+		"model":"gpt-5",
+		"messages":[{"role":"user","content":"hi"}],
+		"tools":[
+			{"type":"function","function":{"name":"image_gen","description":"generate images"}},
+			{"type":"function","function":{"name":"calculator"}}
+		]
+	}`)
+
+	prepared, err := PrepareImageGenerationDisabledJSONBody(body)
+	require.Nil(t, err)
+	require.NotContains(t, string(prepared), `"name":"image_gen"`)
+	require.Contains(t, string(prepared), `"name":"calculator"`)
+	require.Contains(t, string(prepared), "暂不支持生图")
+}
