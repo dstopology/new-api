@@ -437,11 +437,13 @@ func testChannel(channel *model.Channel, testUserID int, testModel string, endpo
 		}
 	}
 	if relay.ChannelDisablesImageGeneration(info) {
-		if err := relay.RejectImageGenerationJSONBody(jsonData); err != nil {
+		var imageErr *types.NewAPIError
+		jsonData, imageErr = relay.PrepareImageGenerationDisabledJSONBody(jsonData)
+		if imageErr != nil {
 			return testResult{
 				context:     c,
-				localErr:    err,
-				newAPIError: err,
+				localErr:    imageErr,
+				newAPIError: imageErr,
 			}
 		}
 	}

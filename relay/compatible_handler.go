@@ -176,8 +176,10 @@ func TextHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *types
 			}
 		}
 		if ChannelDisablesImageGeneration(info) {
-			if err := RejectImageGenerationJSONBody(jsonData); err != nil {
-				return err
+			var imageErr *types.NewAPIError
+			jsonData, imageErr = PrepareImageGenerationDisabledJSONBody(jsonData)
+			if imageErr != nil {
+				return imageErr
 			}
 		}
 

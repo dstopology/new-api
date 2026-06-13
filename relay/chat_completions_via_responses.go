@@ -127,8 +127,10 @@ func chatCompletionsViaResponses(c *gin.Context, info *relaycommon.RelayInfo, ad
 		return nil, types.NewError(err, types.ErrorCodeConvertRequestFailed, types.ErrOptionWithSkipRetry())
 	}
 	if ChannelDisablesImageGeneration(info) {
-		if err := RejectImageGenerationJSONBody(jsonData); err != nil {
-			return nil, err
+		var imageErr *types.NewAPIError
+		jsonData, imageErr = PrepareImageGenerationDisabledJSONBody(jsonData)
+		if imageErr != nil {
+			return nil, imageErr
 		}
 	}
 

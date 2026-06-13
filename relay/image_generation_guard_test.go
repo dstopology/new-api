@@ -28,8 +28,8 @@ func TestRejectImageGenerationRequestRespectsChannelSetting(t *testing.T) {
 	require.Equal(t, types.ErrorCodeImageGenerationDisabled, err.GetErrorCode())
 }
 
-func TestResponsesRequestUsesImageGenerationTool(t *testing.T) {
-	require.True(t, ResponsesRequestUsesImageGeneration(&dto.OpenAIResponsesRequest{
+func TestResponsesRequestAllowsImageGenerationToolDeclaration(t *testing.T) {
+	require.False(t, ResponsesRequestUsesImageGeneration(&dto.OpenAIResponsesRequest{
 		Model: "gpt-5",
 		Tools: []byte(`[{"type":"image_generation"}]`),
 	}))
@@ -37,7 +37,7 @@ func TestResponsesRequestUsesImageGenerationTool(t *testing.T) {
 		Model:      "gpt-5",
 		ToolChoice: []byte(`{"type":"image_generation"}`),
 	}))
-	require.True(t, ResponsesRequestUsesImageGeneration(&dto.OpenAIResponsesRequest{
+	require.False(t, ResponsesRequestUsesImageGeneration(&dto.OpenAIResponsesRequest{
 		Model: "gpt-5",
 		Tools: []byte(`[{"type":"image_generation_preview"}]`),
 	}))
@@ -45,7 +45,7 @@ func TestResponsesRequestUsesImageGenerationTool(t *testing.T) {
 		"model":"gpt-5",
 		"input":[{"role":"user","content":[{"type":"input_image","image_url":"data:image/png;base64,abc"}]}]
 	}`)))
-	require.True(t, JSONBodyUsesImageGeneration([]byte(`{
+	require.False(t, JSONBodyUsesImageGeneration([]byte(`{
 		"model":"gpt-5",
 		"tools":[{"type":"function","function":{"name":"helper","parameters":{"allowed_tools":[{"type":"image_generation_preview"}]}}}]
 	}`)))
@@ -53,6 +53,37 @@ func TestResponsesRequestUsesImageGenerationTool(t *testing.T) {
 		"model":"gpt-5",
 		"input":[{"role":"user","content":[{"type":"input_text","text":"please explain image_generation"}]}]
 	}`)))
+}
+
+func TestPrepareImageGenerationDisabledJSONBodyRemovesToolsAndAddsNotice(t *testing.T) {
+	body := []byte(`{
+		"model":"gpt-5",
+		"instructions":"You may call image_generation when useful.",
+		"tools":[
+			{"type":"web_search_preview"},
+			{"type":"image_generation","output_format":"png"}
+		],
+		"metadata":{"allowed_tools":[{"type":"image_generation_preview"},{"type":"file_search"}]}
+	}`)
+
+	prepared, err := PrepareImageGenerationDisabledJSONBody(body)
+	require.Nil(t, err)
+	require.NotContains(t, string(prepared), "image_generation")
+	require.Contains(t, string(prepared), "暂不支持生图")
+	require.Contains(t, string(prepared), `"type":"web_search_preview"`)
+	require.Contains(t, string(prepared), `"type":"file_search"`)
+}
+
+func TestPrepareImageGenerationDisabledJSONBodyRejectsExplicitToolChoice(t *testing.T) {
+	prepared, err := PrepareImageGenerationDisabledJSONBody([]byte(`{
+		"model":"gpt-5",
+		"tool_choice":{"type":"image_generation"},
+		"tools":[{"type":"image_generation"}]
+	}`))
+
+	require.Nil(t, prepared)
+	require.NotNil(t, err)
+	require.Equal(t, types.ErrorCodeImageGenerationDisabled, err.GetErrorCode())
 }
 
 func TestGeneralOpenAIRequestUsesImageOutputModality(t *testing.T) {

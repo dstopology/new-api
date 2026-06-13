@@ -108,8 +108,10 @@ func ResponsesHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *
 			}
 		}
 		if ChannelDisablesImageGeneration(info) {
-			if err := RejectImageGenerationJSONBody(jsonData); err != nil {
-				return err
+			var imageErr *types.NewAPIError
+			jsonData, imageErr = PrepareImageGenerationDisabledJSONBody(jsonData)
+			if imageErr != nil {
+				return imageErr
 			}
 		}
 
