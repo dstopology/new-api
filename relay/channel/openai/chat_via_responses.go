@@ -59,10 +59,6 @@ func OaiResponsesToChatHandler(c *gin.Context, info *relaycommon.RelayInfo, resp
 		return nil, types.WithOpenAIError(*oaiError, resp.StatusCode)
 	}
 
-	if channelDisablesImageGeneration(info) && responsesResponseUsesImageGeneration(&responsesResp) {
-		return nil, imageGenerationDisabledAPIError()
-	}
-
 	chatId := helper.GetResponseID(c)
 	chatResp, usage, err := service.ResponsesResponseToChatCompletionsResponse(&responsesResp, chatId)
 	if err != nil {
@@ -312,12 +308,6 @@ func OaiResponsesToChatStreamHandler(c *gin.Context, info *relaycommon.RelayInfo
 			sr.Error(err)
 			return
 		}
-		if channelDisablesImageGeneration(info) && responsesStreamUsesImageGeneration(&streamResp) {
-			streamErr = imageGenerationDisabledAPIError()
-			sr.Stop(streamErr)
-			return
-		}
-
 		switch streamResp.Type {
 		case "response.created":
 			if streamResp.Response != nil {

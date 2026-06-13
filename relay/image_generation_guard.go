@@ -56,6 +56,16 @@ func ImageGenerationDisabledTaskError() *dto.TaskError {
 	)
 }
 
+// RejectImageGenerationRequest hard-rejects only the dedicated image endpoints
+// (/v1/images/*), which are one-shot requests with no conversational session to
+// keep alive, so a 403 there is harmless.
+//
+// Chat / Responses requests are intentionally NOT rejected here. Returning a 403
+// to a live agent session kills the session: the client keeps the conversation
+// context and retries the same request forever. Those paths are degraded
+// gracefully instead — see PrepareImageGenerationDisabledJSONBody, which strips
+// the image_generation capability before the request reaches the upstream and
+// tells the model to decline in text.
 func RejectImageGenerationRequest(info *relaycommon.RelayInfo) *types.NewAPIError {
 	if info == nil {
 		return nil
@@ -66,26 +76,17 @@ func RejectImageGenerationRequest(info *relaycommon.RelayInfo) *types.NewAPIErro
 	if info.RelayFormat == types.RelayFormatOpenAIImage || IsImageGenerationRelayMode(info.RelayMode) {
 		return ImageGenerationDisabledAPIError()
 	}
-	if isBlockedImageGenerationModel(info.OriginModelName) || isBlockedImageGenerationModel(info.UpstreamModelName) {
-		return ImageGenerationDisabledAPIError()
-	}
-	if requestUsesImageGeneration(info.Request) {
-		return ImageGenerationDisabledAPIError()
-	}
 	return nil
 }
 
-func RejectImageGenerationJSONBody(data []byte) *types.NewAPIError {
-	if JSONBodyUsesImageGeneration(data) {
-		return ImageGenerationDisabledAPIError()
-	}
-	return nil
-}
-
+// PrepareImageGenerationDisabledJSONBody sanitizes an outbound request body so the
+// upstream can never produce an image: it strips image_generation tool
+// declarations, neutralizes any tool_choice that forces image generation, drops
+// image output modalities, and injects an instruction telling the model to decline
+// in text. It never rejects the request — the call is always allowed through
+// (text-only), which keeps the client session alive instead of triggering an
+// endless retry loop on a 403.
 func PrepareImageGenerationDisabledJSONBody(data []byte) ([]byte, *types.NewAPIError) {
-	if err := RejectImageGenerationJSONBody(data); err != nil {
-		return nil, err
-	}
 	data, _, err := RewriteImageGenerationDisabledJSONBody(data)
 	if err != nil {
 		return nil, types.NewError(err, types.ErrorCodeConvertRequestFailed, types.ErrOptionWithSkipRetry())
@@ -99,12 +100,14 @@ func RewriteImageGenerationDisabledJSONBody(data []byte) ([]byte, bool, error) {
 		return data, false, err
 	}
 	removed := removeImageGenerationToolDeclarations(body)
+	choiceNeutralized := neutralizeImageGenerationToolChoice(body)
+	modalityStripped := stripImageOutputModalities(body)
 	sanitized := sanitizeImageGenerationInstructionFields(body)
 	injected := false
-	if removed {
+	if removed || choiceNeutralized || modalityStripped {
 		injected = injectImageGenerationDisabledNotice(body)
 	}
-	if !removed && !sanitized && !injected {
+	if !removed && !choiceNeutralized && !modalityStripped && !sanitized && !injected {
 		return data, false, nil
 	}
 	output, err := appcommon.Marshal(body)
@@ -226,19 +229,6 @@ func RawJSONHasImageOutputModality(raw []byte) bool {
 	return rawValueHasImageOutputModality(value)
 }
 
-func requestUsesImageGeneration(request dto.Request) bool {
-	switch r := request.(type) {
-	case *dto.ImageRequest:
-		return true
-	case *dto.OpenAIResponsesRequest:
-		return ResponsesRequestUsesImageGeneration(r)
-	case *dto.GeneralOpenAIRequest:
-		return GeneralOpenAIRequestUsesImageGeneration(r)
-	default:
-		return false
-	}
-}
-
 func rawValueUsesImageGenerationTool(value any) bool {
 	return rawValueUsesImageGenerationToolValue(value, false)
 }
@@ -303,7 +293,17 @@ func injectImageGenerationDisabledNotice(value any) bool {
 }
 
 func appendImageGenerationDisabledInstructions(body map[string]any) bool {
-	current := appcommon.Interface2String(body["instructions"])
+	current, ok := body["instructions"].(string)
+	if !ok {
+		// Absent → set the notice. Present but non-string (array/object) → leave the
+		// structured value intact instead of stringifying it, which would corrupt the
+		// request body.
+		if _, present := body["instructions"]; present {
+			return false
+		}
+		body["instructions"] = imageGenerationDisabledNotice
+		return true
+	}
 	if strings.Contains(current, imageGenerationDisabledNotice) {
 		return false
 	}
@@ -329,22 +329,55 @@ func prependImageGenerationDisabledMessage(body map[string]any) bool {
 		if role != "system" && role != "developer" {
 			continue
 		}
-		content := appcommon.Interface2String(msg["content"])
-		if strings.Contains(content, imageGenerationDisabledNotice) {
+		// Already carries the notice → no-op (idempotent).
+		if messageContentContainsText(msg["content"], imageGenerationDisabledNotice) {
 			return false
 		}
-		if strings.TrimSpace(content) == "" {
+		switch content := msg["content"].(type) {
+		case string:
+			if strings.TrimSpace(content) == "" {
+				msg["content"] = imageGenerationDisabledNotice
+			} else {
+				msg["content"] = imageGenerationDisabledNotice + "\n\n" + content
+			}
+		case []any:
+			// Multimodal content: prepend a text part instead of stringifying the
+			// array (which would corrupt the request body).
+			msg["content"] = append([]any{map[string]any{
+				"type": "text",
+				"text": imageGenerationDisabledNotice,
+			}}, content...)
+		default:
 			msg["content"] = imageGenerationDisabledNotice
-		} else {
-			msg["content"] = imageGenerationDisabledNotice + "\n\n" + content
 		}
 		return true
 	}
+	// No system/developer message present → prepend a fresh one.
 	body["messages"] = append([]any{map[string]any{
 		"role":    "system",
 		"content": imageGenerationDisabledNotice,
 	}}, messages...)
 	return true
+}
+
+// messageContentContainsText reports whether a chat message content (a string, or
+// a multimodal array of content parts) already contains substr in its text.
+func messageContentContainsText(content any, substr string) bool {
+	switch v := content.(type) {
+	case string:
+		return strings.Contains(v, substr)
+	case []any:
+		for _, item := range v {
+			part, ok := item.(map[string]any)
+			if !ok {
+				continue
+			}
+			if text, ok := part["text"].(string); ok && strings.Contains(text, substr) {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func sanitizeImageGenerationInstructionFields(value any) bool {
@@ -483,6 +516,136 @@ func isToolListKey(key string) bool {
 	default:
 		return false
 	}
+}
+
+// neutralizeImageGenerationToolChoice downgrades any tool_choice that would force
+// the upstream to generate an image to "auto". It runs after the image_generation
+// tool declarations have already been stripped, so an allowed_tools choice whose
+// only entry was image_generation (now empty) is also downgraded — an empty
+// allowed_tools list would otherwise be rejected by the upstream.
+func neutralizeImageGenerationToolChoice(value any) bool {
+	switch v := value.(type) {
+	case []any:
+		changed := false
+		for _, item := range v {
+			if neutralizeImageGenerationToolChoice(item) {
+				changed = true
+			}
+		}
+		return changed
+	case map[string]any:
+		changed := false
+		for key, item := range v {
+			if isToolChoiceKey(key) && shouldDowngradeImageGenerationToolChoice(item) {
+				v[key] = "auto"
+				changed = true
+				continue
+			}
+			if neutralizeImageGenerationToolChoice(item) {
+				changed = true
+			}
+		}
+		return changed
+	default:
+		return false
+	}
+}
+
+func isToolChoiceKey(key string) bool {
+	return strings.ToLower(strings.TrimSpace(key)) == "tool_choice"
+}
+
+func shouldDowngradeImageGenerationToolChoice(value any) bool {
+	switch v := value.(type) {
+	case string:
+		return isImageGenerationToolType(v)
+	case map[string]any:
+		choiceType := strings.ToLower(strings.TrimSpace(appcommon.Interface2String(v["type"])))
+		// Bare {"type":"image_generation"} directly forces the built-in image tool.
+		if isImageGenerationToolType(choiceType) {
+			return true
+		}
+		// {"type":"function","function":{"name":"image_generation"}}
+		if function, ok := v["function"].(map[string]any); ok &&
+			isImageGenerationToolType(appcommon.Interface2String(function["name"])) {
+			return true
+		}
+		// allowed_tools whose image_generation entry was just stripped, leaving the
+		// list empty or absent — an empty allowed_tools choice is invalid upstream.
+		if choiceType == "allowed_tools" {
+			if tools, ok := v["tools"].([]any); !ok || len(tools) == 0 {
+				return true
+			}
+		}
+		return false
+	default:
+		return false
+	}
+}
+
+// stripImageOutputModalities removes "image" from any modalities list so the model
+// is asked for text-only output (e.g. gpt-4o image output via chat completions).
+func stripImageOutputModalities(value any) bool {
+	switch v := value.(type) {
+	case []any:
+		changed := false
+		for _, item := range v {
+			if stripImageOutputModalities(item) {
+				changed = true
+			}
+		}
+		return changed
+	case map[string]any:
+		changed := false
+		for key, item := range v {
+			if isModalityKey(key) {
+				if filtered, ok := filterImageModalityList(item); ok {
+					v[key] = filtered
+					changed = true
+				}
+				continue
+			}
+			if stripImageOutputModalities(item) {
+				changed = true
+			}
+		}
+		return changed
+	default:
+		return false
+	}
+}
+
+func isModalityKey(key string) bool {
+	switch strings.ToLower(strings.TrimSpace(key)) {
+	case "modalities", "output_modalities", "response_modalities":
+		return true
+	default:
+		return false
+	}
+}
+
+func filterImageModalityList(value any) (any, bool) {
+	list, ok := value.([]any)
+	if !ok {
+		return value, false
+	}
+	filtered := make([]any, 0, len(list))
+	removed := false
+	for _, item := range list {
+		modality := strings.ToLower(strings.TrimSpace(appcommon.Interface2String(item)))
+		if modality == "image" || modality == "images" {
+			removed = true
+			continue
+		}
+		filtered = append(filtered, item)
+	}
+	if !removed {
+		return value, false
+	}
+	if len(filtered) == 0 {
+		filtered = append(filtered, "text")
+	}
+	return filtered, true
 }
 
 func rawValueExplicitlySelectsImageGenerationTool(value any) bool {
