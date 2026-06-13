@@ -37,9 +37,21 @@ func TestResponsesRequestUsesImageGenerationTool(t *testing.T) {
 		Model:      "gpt-5",
 		ToolChoice: []byte(`{"type":"image_generation"}`),
 	}))
+	require.True(t, ResponsesRequestUsesImageGeneration(&dto.OpenAIResponsesRequest{
+		Model: "gpt-5",
+		Tools: []byte(`[{"type":"image_generation_preview"}]`),
+	}))
 	require.False(t, JSONBodyUsesImageGeneration([]byte(`{
 		"model":"gpt-5",
 		"input":[{"role":"user","content":[{"type":"input_image","image_url":"data:image/png;base64,abc"}]}]
+	}`)))
+	require.True(t, JSONBodyUsesImageGeneration([]byte(`{
+		"model":"gpt-5",
+		"tools":[{"type":"function","function":{"name":"helper","parameters":{"allowed_tools":[{"type":"image_generation_preview"}]}}}]
+	}`)))
+	require.False(t, JSONBodyUsesImageGeneration([]byte(`{
+		"model":"gpt-5",
+		"input":[{"role":"user","content":[{"type":"input_text","text":"please explain image_generation"}]}]
 	}`)))
 }
 

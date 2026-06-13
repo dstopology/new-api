@@ -115,8 +115,8 @@ func JSONBodyUsesImageGeneration(data []byte) bool {
 	if isBlockedImageGenerationModel(appcommon.Interface2String(body["model"])) {
 		return true
 	}
-	return rawValueUsesImageGenerationTool(body["tools"]) ||
-		rawValueUsesImageGenerationTool(body["tool_choice"]) ||
+	return rawValueUsesImageGenerationTool(body) ||
+		rawValueUsesImageGenerationToolSelection(body["tool_choice"]) ||
 		rawValueHasImageOutputModality(body["modalities"]) ||
 		rawValueHasImageOutputModality(body["output_modalities"]) ||
 		rawValueHasImageOutputModality(body["response_modalities"])
@@ -130,7 +130,7 @@ func ResponsesRequestUsesImageGeneration(request *dto.OpenAIResponsesRequest) bo
 		return true
 	}
 	return RawJSONUsesImageGenerationTool(request.Tools) ||
-		RawJSONUsesImageGenerationTool(request.ToolChoice)
+		RawJSONUsesImageGenerationToolChoice(request.ToolChoice)
 }
 
 func GeneralOpenAIRequestUsesImageGeneration(request *dto.GeneralOpenAIRequest) bool {
@@ -148,7 +148,7 @@ func GeneralOpenAIRequestUsesImageGeneration(request *dto.GeneralOpenAIRequest) 
 			return true
 		}
 	}
-	return rawValueUsesImageGenerationTool(request.ToolChoice)
+	return rawValueUsesImageGenerationToolSelection(request.ToolChoice)
 }
 
 func RawJSONUsesImageGenerationTool(raw []byte) bool {
@@ -160,6 +160,17 @@ func RawJSONUsesImageGenerationTool(raw []byte) bool {
 		return false
 	}
 	return rawValueUsesImageGenerationTool(value)
+}
+
+func RawJSONUsesImageGenerationToolChoice(raw []byte) bool {
+	if len(raw) == 0 {
+		return false
+	}
+	var value any
+	if err := appcommon.Unmarshal(raw, &value); err != nil {
+		return false
+	}
+	return rawValueUsesImageGenerationToolSelection(value)
 }
 
 func RawJSONHasImageOutputModality(raw []byte) bool {
@@ -187,12 +198,20 @@ func requestUsesImageGeneration(request dto.Request) bool {
 }
 
 func rawValueUsesImageGenerationTool(value any) bool {
+	return rawValueUsesImageGenerationToolValue(value, false)
+}
+
+func rawValueUsesImageGenerationToolSelection(value any) bool {
+	return rawValueUsesImageGenerationToolValue(value, true)
+}
+
+func rawValueUsesImageGenerationToolValue(value any, allowBareString bool) bool {
 	switch v := value.(type) {
 	case string:
-		return isImageGenerationToolType(v)
+		return allowBareString && isImageGenerationToolType(v)
 	case []any:
 		for _, item := range v {
-			if rawValueUsesImageGenerationTool(item) {
+			if rawValueUsesImageGenerationToolValue(item, allowBareString) {
 				return true
 			}
 		}
@@ -200,11 +219,25 @@ func rawValueUsesImageGenerationTool(value any) bool {
 		if isImageGenerationToolType(appcommon.Interface2String(v["type"])) {
 			return true
 		}
-		if tools, ok := v["tools"]; ok && rawValueUsesImageGenerationTool(tools) {
+		if function, ok := v["function"].(map[string]any); ok && isImageGenerationToolType(appcommon.Interface2String(function["name"])) {
 			return true
 		}
-		if toolChoice, ok := v["tool_choice"]; ok && rawValueUsesImageGenerationTool(toolChoice) {
+		if tools, ok := v["tools"]; ok && rawValueUsesImageGenerationToolValue(tools, true) {
 			return true
+		}
+		if toolChoice, ok := v["tool_choice"]; ok && rawValueUsesImageGenerationToolValue(toolChoice, true) {
+			return true
+		}
+		if tool, ok := v["tool"]; ok && rawValueUsesImageGenerationToolValue(tool, true) {
+			return true
+		}
+		for _, item := range v {
+			switch item.(type) {
+			case []any, map[string]any:
+				if rawValueUsesImageGenerationToolValue(item, false) {
+					return true
+				}
+			}
 		}
 	}
 	return false

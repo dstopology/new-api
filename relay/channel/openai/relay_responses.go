@@ -34,6 +34,10 @@ func OaiResponsesHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http
 		return nil, types.WithOpenAIError(*oaiError, resp.StatusCode)
 	}
 
+	if channelDisablesImageGeneration(info) && responsesResponseUsesImageGeneration(&responsesResponse) {
+		return nil, imageGenerationDisabledAPIError()
+	}
+
 	if responsesResponse.HasImageGenerationCall() {
 		c.Set("image_generation_call", true)
 		c.Set("image_generation_call_quality", responsesResponse.GetQuality())
@@ -78,14 +82,24 @@ func OaiResponsesStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp
 
 	var usage = &dto.Usage{}
 	var responseTextBuilder strings.Builder
+	var blockedErr *types.NewAPIError
 
 	helper.StreamScannerHandler(c, resp, info, func(data string, sr *helper.StreamResult) {
+		if blockedErr != nil {
+			sr.Stop(blockedErr)
+			return
+		}
 
 		// 检查当前数据是否包含 completed 状态和 usage 信息
 		var streamResponse dto.ResponsesStreamResponse
 		if err := common.UnmarshalJsonStr(data, &streamResponse); err != nil {
 			logger.LogError(c, "failed to unmarshal stream response: "+err.Error())
 			sr.Error(err)
+			return
+		}
+		if channelDisablesImageGeneration(info) && responsesStreamUsesImageGeneration(&streamResponse) {
+			blockedErr = imageGenerationDisabledAPIError()
+			sr.Stop(blockedErr)
 			return
 		}
 		sendResponsesStreamData(c, streamResponse, data)
@@ -129,6 +143,10 @@ func OaiResponsesStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp
 			}
 		}
 	})
+
+	if blockedErr != nil {
+		return nil, blockedErr
+	}
 
 	if usage.CompletionTokens == 0 {
 		// 计算输出文本的 token 数量
