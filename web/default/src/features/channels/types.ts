@@ -84,6 +84,7 @@ export interface ChannelSettings {
   thinking_to_content?: boolean
   proxy?: string
   pass_through_body_enabled?: boolean
+  disable_image_generation?: boolean
   system_prompt?: string
   system_prompt_override?: boolean
   compact_replacement_channel_id?: number

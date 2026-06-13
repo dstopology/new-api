@@ -91,6 +91,9 @@ func chatCompletionsViaResponses(c *gin.Context, info *relaycommon.RelayInfo, ad
 	if err := common.Unmarshal(chatJSON, &overriddenChatReq); err != nil {
 		return nil, types.NewError(err, types.ErrorCodeChannelParamOverrideInvalid, types.ErrOptionWithSkipRetry())
 	}
+	if ChannelDisablesImageGeneration(info) && GeneralOpenAIRequestUsesImageGeneration(&overriddenChatReq) {
+		return nil, ImageGenerationDisabledAPIError()
+	}
 
 	responsesReq, err := service.ChatCompletionsRequestToResponsesRequest(&overriddenChatReq)
 	if err != nil {
@@ -122,6 +125,11 @@ func chatCompletionsViaResponses(c *gin.Context, info *relaycommon.RelayInfo, ad
 	jsonData, err = relaycommon.RemoveDisabledFields(jsonData, info.ChannelOtherSettings, info.ChannelSetting.PassThroughBodyEnabled)
 	if err != nil {
 		return nil, types.NewError(err, types.ErrorCodeConvertRequestFailed, types.ErrOptionWithSkipRetry())
+	}
+	if ChannelDisablesImageGeneration(info) {
+		if err := RejectImageGenerationJSONBody(jsonData); err != nil {
+			return nil, err
+		}
 	}
 
 	body, size, closer, err := relaycommon.NewOutboundJSONBody(jsonData)

@@ -170,6 +170,10 @@ func RelayTaskSubmit(c *gin.Context, info *relaycommon.RelayInfo) (*TaskSubmitRe
 	if err := helper.ModelMappedHelper(c, info, nil); err != nil {
 		return nil, service.TaskErrorWrapperLocal(err, "model_mapping_failed", http.StatusBadRequest)
 	}
+	if ChannelDisablesImageGeneration(info) &&
+		(isBlockedImageGenerationModel(modelName) || isBlockedImageGenerationModel(info.UpstreamModelName)) {
+		return nil, ImageGenerationDisabledTaskError()
+	}
 
 	// 3. 预生成公开 task ID（仅首次）
 	if info.PublicTaskID == "" {

@@ -23,6 +23,9 @@ import (
 
 func ImageHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *types.NewAPIError) {
 	info.InitChannelMeta(c)
+	if err := RejectImageGenerationRequest(info); err != nil {
+		return err
+	}
 
 	imageReq, ok := info.Request.(*dto.ImageRequest)
 	if !ok {
@@ -37,6 +40,9 @@ func ImageHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *type
 	err = helper.ModelMappedHelper(c, info, request)
 	if err != nil {
 		return types.NewError(err, types.ErrorCodeChannelModelMappedError, types.ErrOptionWithSkipRetry())
+	}
+	if err := RejectImageGenerationRequest(info); err != nil {
+		return err
 	}
 
 	adaptor := GetAdaptor(info.ApiType)
@@ -80,6 +86,11 @@ func ImageHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *type
 				jsonData, err = relaycommon.ApplyParamOverrideWithRelayInfo(jsonData, info)
 				if err != nil {
 					return newAPIErrorFromParamOverride(err)
+				}
+			}
+			if ChannelDisablesImageGeneration(info) {
+				if err := RejectImageGenerationJSONBody(jsonData); err != nil {
+					return err
 				}
 			}
 

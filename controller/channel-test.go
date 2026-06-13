@@ -268,6 +268,13 @@ func testChannel(channel *model.Channel, testUserID int, testModel string, endpo
 			newAPIError: types.NewError(err, types.ErrorCodeChannelModelMappedError),
 		}
 	}
+	if err := relay.RejectImageGenerationRequest(info); err != nil {
+		return testResult{
+			context:     c,
+			localErr:    err,
+			newAPIError: err,
+		}
+	}
 
 	testModel = info.UpstreamModelName
 	// 更新请求中的模型名称
@@ -426,6 +433,15 @@ func testChannel(channel *model.Channel, testUserID int, testModel string, endpo
 				context:     c,
 				localErr:    err,
 				newAPIError: types.NewError(err, types.ErrorCodeChannelParamOverrideInvalid),
+			}
+		}
+	}
+	if relay.ChannelDisablesImageGeneration(info) {
+		if err := relay.RejectImageGenerationJSONBody(jsonData); err != nil {
+			return testResult{
+				context:     c,
+				localErr:    err,
+				newAPIError: err,
 			}
 		}
 	}

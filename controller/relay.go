@@ -418,6 +418,15 @@ func RelayMidjourney(c *gin.Context) {
 		})
 		return
 	}
+	relayInfo.InitChannelMeta(c)
+	if relay.ChannelDisablesImageGeneration(relayInfo) && relay.IsMidjourneyGenerationMode(relayInfo.RelayMode) {
+		c.JSON(http.StatusForbidden, gin.H{
+			"description": "image generation is disabled on this channel",
+			"type":        "new_api_error",
+			"code":        string(types.ErrorCodeImageGenerationDisabled),
+		})
+		return
+	}
 
 	var mjErr *dto.MidjourneyResponse
 	switch relayInfo.RelayMode {

@@ -22,6 +22,9 @@ import (
 
 func ResponsesHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *types.NewAPIError) {
 	info.InitChannelMeta(c)
+	if err := RejectImageGenerationRequest(info); err != nil {
+		return err
+	}
 	if info.RelayMode == relayconstant.RelayModeResponsesCompact {
 		switch info.ApiType {
 		case appconstant.APITypeOpenAI, appconstant.APITypeCodex:
@@ -64,6 +67,9 @@ func ResponsesHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *
 	if err != nil {
 		return types.NewError(err, types.ErrorCodeChannelModelMappedError, types.ErrOptionWithSkipRetry())
 	}
+	if err := RejectImageGenerationRequest(info); err != nil {
+		return err
+	}
 
 	adaptor := GetAdaptor(info.ApiType)
 	if adaptor == nil {
@@ -99,6 +105,11 @@ func ResponsesHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *
 			jsonData, err = relaycommon.ApplyParamOverrideWithRelayInfo(jsonData, info)
 			if err != nil {
 				return newAPIErrorFromParamOverride(err)
+			}
+		}
+		if ChannelDisablesImageGeneration(info) {
+			if err := RejectImageGenerationJSONBody(jsonData); err != nil {
+				return err
 			}
 		}
 

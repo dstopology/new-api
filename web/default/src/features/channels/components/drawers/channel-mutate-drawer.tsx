@@ -248,6 +248,7 @@ function hasAdvancedSettingsValues(values: ChannelFormValues): boolean {
     values.force_format ||
     values.thinking_to_content ||
     values.pass_through_body_enabled ||
+    values.disable_image_generation ||
     values.system_prompt_override ||
     values.claude_beta_query ||
     values.upstream_model_update_check_enabled ||
@@ -3227,6 +3228,31 @@ export function ChannelMutateDrawer({
                               <FormLabel>{t('Pass Through Body')}</FormLabel>
                               <FormDescription>
                                 {t('Pass request body directly to upstream')}
+                              </FormDescription>
+                            </div>
+                            <FormControl>
+                              <Switch
+                                checked={field.value}
+                                onCheckedChange={field.onChange}
+                              />
+                            </FormControl>
+                          </FormItem>
+                        )}
+                      />
+
+                      <FormField
+                        control={form.control}
+                        name='disable_image_generation'
+                        render={({ field }) => (
+                          <FormItem className='flex items-center justify-between px-4 py-3'>
+                            <div className='space-y-0.5'>
+                              <FormLabel>
+                                {t('Disable image generation')}
+                              </FormLabel>
+                              <FormDescription>
+                                {t(
+                                  'Reject image generation requests on this channel'
+                                )}
                               </FormDescription>
                             </div>
                             <FormControl>

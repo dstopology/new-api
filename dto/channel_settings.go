@@ -5,6 +5,7 @@ type ChannelSettings struct {
 	ThinkingToContent           bool   `json:"thinking_to_content,omitempty"`
 	Proxy                       string `json:"proxy"`
 	PassThroughBodyEnabled      bool   `json:"pass_through_body_enabled,omitempty"`
+	DisableImageGeneration      bool   `json:"disable_image_generation,omitempty"`
 	SystemPrompt                string `json:"system_prompt,omitempty"`
 	SystemPromptOverride        bool   `json:"system_prompt_override,omitempty"`
 	CompactReplacementChannelID int    `json:"compact_replacement_channel_id,omitempty"`
