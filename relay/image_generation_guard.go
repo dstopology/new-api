@@ -244,7 +244,7 @@ func rawValueUsesImageGenerationTool(value any) bool {
 }
 
 func rawValueUsesImageGenerationToolSelection(value any) bool {
-	return rawValueUsesImageGenerationToolValue(value, true)
+	return rawValueExplicitlySelectsImageGenerationTool(value)
 }
 
 func removeImageGenerationToolDeclarations(value any) bool {
@@ -483,6 +483,24 @@ func isToolListKey(key string) bool {
 	default:
 		return false
 	}
+}
+
+func rawValueExplicitlySelectsImageGenerationTool(value any) bool {
+	switch v := value.(type) {
+	case string:
+		return isImageGenerationToolType(v)
+	case map[string]any:
+		if isImageGenerationToolType(appcommon.Interface2String(v["type"])) {
+			return true
+		}
+		if tool, ok := v["tool"].(map[string]any); ok && isImageGenerationToolType(appcommon.Interface2String(tool["type"])) {
+			return true
+		}
+		if function, ok := v["function"].(map[string]any); ok && isImageGenerationToolType(appcommon.Interface2String(function["name"])) {
+			return true
+		}
+	}
+	return false
 }
 
 func rawValueUsesImageGenerationToolValue(value any, allowBareString bool) bool {

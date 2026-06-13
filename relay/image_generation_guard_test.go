@@ -38,6 +38,10 @@ func TestResponsesRequestAllowsImageGenerationToolDeclaration(t *testing.T) {
 		ToolChoice: []byte(`{"type":"image_generation"}`),
 	}))
 	require.False(t, ResponsesRequestUsesImageGeneration(&dto.OpenAIResponsesRequest{
+		Model:      "gpt-5",
+		ToolChoice: []byte(`{"type":"allowed_tools","tools":[{"type":"image_generation"},{"type":"web_search_preview"}]}`),
+	}))
+	require.False(t, ResponsesRequestUsesImageGeneration(&dto.OpenAIResponsesRequest{
 		Model: "gpt-5",
 		Tools: []byte(`[{"type":"image_generation_preview"}]`),
 	}))
@@ -84,6 +88,19 @@ func TestPrepareImageGenerationDisabledJSONBodyRejectsExplicitToolChoice(t *test
 	require.Nil(t, prepared)
 	require.NotNil(t, err)
 	require.Equal(t, types.ErrorCodeImageGenerationDisabled, err.GetErrorCode())
+}
+
+func TestPrepareImageGenerationDisabledJSONBodyCleansAllowedToolChoice(t *testing.T) {
+	prepared, err := PrepareImageGenerationDisabledJSONBody([]byte(`{
+		"model":"gpt-5",
+		"tool_choice":{"type":"allowed_tools","mode":"auto","tools":[{"type":"image_generation"},{"type":"web_search_preview"}]},
+		"tools":[{"type":"image_generation"},{"type":"web_search_preview"}]
+	}`))
+
+	require.Nil(t, err)
+	require.NotContains(t, string(prepared), "image_generation")
+	require.Contains(t, string(prepared), `"type":"allowed_tools"`)
+	require.Contains(t, string(prepared), `"type":"web_search_preview"`)
 }
 
 func TestGeneralOpenAIRequestUsesImageOutputModality(t *testing.T) {
