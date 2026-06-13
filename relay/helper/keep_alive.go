@@ -12,6 +12,7 @@ import (
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	relayconstant "github.com/QuantumNous/new-api/relay/constant"
 	"github.com/QuantumNous/new-api/setting/operation_setting"
+	"github.com/QuantumNous/new-api/types"
 
 	"github.com/gin-gonic/gin"
 )
@@ -38,7 +39,12 @@ func RelayPingConfig(info *relaycommon.RelayInfo, generalSettings *operation_set
 	}
 
 	imageMode := isImageRelayMode(info.RelayMode)
-	pingEnabled := imageMode
+	// Claude CLI (/v1/messages) streams, e.g. context compaction, can stall well past
+	// Cloudflare's ~120s origin timeout before the first byte and trip a 524. Keep that
+	// format alive like image mode — independent of the global ping switch — so other
+	// channels stay completely unaffected unless the operator opts in globally.
+	claudeMode := info.RelayFormat == types.RelayFormatClaude
+	pingEnabled := imageMode || claudeMode
 	if generalSettings != nil && generalSettings.PingIntervalEnabled {
 		pingEnabled = true
 	}
@@ -50,7 +56,7 @@ func RelayPingConfig(info *relaycommon.RelayInfo, generalSettings *operation_set
 	if generalSettings != nil && generalSettings.PingIntervalSeconds > 0 {
 		interval = time.Duration(generalSettings.PingIntervalSeconds) * time.Second
 	}
-	if imageMode {
+	if imageMode || claudeMode {
 		if generalSettings == nil || !generalSettings.PingIntervalEnabled || interval > time.Minute {
 			interval = DefaultImageKeepAliveInterval
 		}
