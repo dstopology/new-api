@@ -115,6 +115,15 @@ const OPERATIONS_SECTIONS = [
         defaultArchiveRetentionDays={Number(
           settings['conversation_archive_setting.retention_days'] ?? 7
         )}
+        defaultFailureRecordEnabled={Boolean(
+          settings['failure_record_setting.enabled']
+        )}
+        defaultFailureRecordRetentionDays={Number(
+          settings['failure_record_setting.retention_days'] ?? 7
+        )}
+        defaultFailureRecordMaxBodyKB={Number(
+          settings['failure_record_setting.max_body_kb'] ?? 256
+        )}
       />
     ),
   },

@@ -91,6 +91,9 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 		if newAPIError != nil {
 			logger.LogError(c, fmt.Sprintf("relay error: %s", common.LocalLogPreview(newAPIError.Error())))
 			service.RecordFailedRelayConsumeLog(c, relayInfo, newAPIError)
+			// 安全排查：失败请求的原始请求体记录（受 failure_record_setting 控制，
+			// 必须在 SetMessage 脱敏之前调用，以拿到未脱敏的原始错误）。
+			service.RecordFailureRequestBody(c, relayInfo, newAPIError)
 			newAPIError.SetMessage(common.MessageWithRequestId(newAPIError.Error(), requestId))
 			switch relayFormat {
 			case types.RelayFormatOpenAIRealtime:

@@ -465,6 +465,16 @@ func RecordConsumeLog(c *gin.Context, userId int, params RecordConsumeLogParams)
 	username := c.GetString("username")
 	requestId := c.GetString(common.RequestIdKey)
 	upstreamRequestId := c.GetString(common.UpstreamRequestIdKey)
+	// 记录入站请求体大小，供使用日志里「纯文/生图」初判使用。
+	// 生图请求体积主要来自 base64 图像，超过阈值即疑似生图；只读 ContentLength，零额外开销。
+	if c != nil && c.Request != nil && c.Request.ContentLength > 0 {
+		if params.Other == nil {
+			params.Other = make(map[string]interface{})
+		}
+		if _, exists := params.Other["request_body_size"]; !exists {
+			params.Other["request_body_size"] = c.Request.ContentLength
+		}
+	}
 	otherStr := common.MapToJsonStr(params.Other)
 	// 判断是否需要记录 IP
 	needRecordIp := false

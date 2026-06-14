@@ -122,6 +122,28 @@ func GetLogArchive(c *gin.Context) {
 	common.ApiSuccess(c, detail)
 }
 
+// GetRequestFailureLog returns the captured raw request body + error of a failed
+// relay request (see failure_record_setting). Keyed by the log's request id; data
+// is null when nothing was captured (recording off, already expired, or success).
+func GetRequestFailureLog(c *gin.Context) {
+	id, err := strconv.Atoi(c.Param("id"))
+	if err != nil || id <= 0 {
+		common.ApiError(c, fmt.Errorf("无效的日志 ID"))
+		return
+	}
+	log, err := model.GetLogById(id)
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	record, err := model.GetRequestFailureLogByRequestId(log.RequestId)
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	common.ApiSuccess(c, record)
+}
+
 // Deprecated: SearchAllLogs 已废弃，前端未使用该接口。
 func SearchAllLogs(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{

@@ -134,6 +134,32 @@ export function getLogStatusCode(
   return null
 }
 
+/**
+ * Body size (bytes) at/above which a request is preliminarily flagged as image
+ * ("生图"). Image payloads are dominated by base64, so a large body is a fast,
+ * cheap signal. Accurate billing flags (image_generation_call / image) take
+ * precedence when present. Tune this threshold to your "suspicious body size".
+ */
+export const SUSPICIOUS_BODY_SIZE_BYTES = 256 * 1024 // 256KB
+
+/**
+ * Preliminary classification of a consume request as image ("生图") vs
+ * text-only ("纯文"), for the usage-log tag. Prefers the accurate
+ * image-billing flags, then falls back to the inbound body-size heuristic.
+ */
+export function getRequestContentKind(
+  other: LogOtherData | null
+): 'image' | 'text' {
+  if (other) {
+    if (other.image_generation_call || other.image) return 'image'
+    const size = other.request_body_size
+    if (typeof size === 'number' && size >= SUSPICIOUS_BODY_SIZE_BYTES) {
+      return 'image'
+    }
+  }
+  return 'text'
+}
+
 export function getStatusCodeVariant(
   statusCode: number
 ): StatusBadgeProps['variant'] {

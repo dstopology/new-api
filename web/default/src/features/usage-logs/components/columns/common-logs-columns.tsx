@@ -37,7 +37,7 @@ import {
 } from '@/components/ui/tooltip'
 import { DataTableColumnHeader } from '@/components/data-table'
 import { StatusBadge, type StatusBadgeProps } from '@/components/status-badge'
-import { LOG_TYPE_ALL_VALUE } from '../../constants'
+import { LOG_TYPE_ALL_VALUE, LOG_TYPE_ENUM } from '../../constants'
 import type { UsageLog } from '../../data/schema'
 import {
   formatModelName,
@@ -46,6 +46,7 @@ import {
   getTieredBillingSummary,
   getLogStatusCode,
   getStatusCodeVariant,
+  getRequestContentKind,
   hasAnyCacheTokens,
   parseLogOther,
   isViolationFeeLog,
@@ -58,6 +59,7 @@ import {
 } from '../../lib/utils'
 import type { LogOtherData } from '../../types'
 import { ArchiveDialog } from '../dialogs/archive-dialog'
+import { FailureRecordDialog } from '../dialogs/failure-record-dialog'
 import { DetailsDialog } from '../dialogs/details-dialog'
 import { ModelBadge } from '../model-badge'
 import { useUsageLogsContext } from '../usage-logs-provider'
@@ -735,33 +737,64 @@ export function useCommonLogsColumns(isAdmin: boolean): ColumnDef<UsageLog>[] {
           />
         )
 
-        if (!isAdmin) return badge
+        // 纯文 / 生图 初判标识：仅消费日志展示，紧跟状态码之后。
+        const isConsume = log.type === LOG_TYPE_ENUM.CONSUME
+        const contentKind = isConsume ? getRequestContentKind(other) : null
+        const kindBadge = contentKind ? (
+          <StatusBadge
+            label={contentKind === 'image' ? t('Image-gen') : t('Text-only')}
+            variant={contentKind === 'image' ? 'orange' : 'neutral'}
+            size='sm'
+            copyable={false}
+          />
+        ) : null
+
+        const isFailure = statusCode >= 400
+        const statusContent = isAdmin ? (
+          <button
+            type='button'
+            className='group inline-flex rounded-md outline-none focus-visible:ring-2 focus-visible:ring-ring/50'
+            title={
+              isFailure
+                ? t('Click to view failure record')
+                : t('Click to view archived request')
+            }
+            onClick={(e) => {
+              e.stopPropagation()
+              setDialogOpen(true)
+            }}
+          >
+            {badge}
+          </button>
+        ) : (
+          badge
+        )
 
         return (
-          <>
-            <button
-              type='button'
-              className='group inline-flex rounded-md outline-none focus-visible:ring-2 focus-visible:ring-ring/50'
-              title={t('Click to view archived request')}
-              onClick={(e) => {
-                e.stopPropagation()
-                setDialogOpen(true)
-              }}
-            >
-              {badge}
-            </button>
-            <ArchiveDialog
-              log={log}
-              open={dialogOpen}
-              onOpenChange={setDialogOpen}
-            />
-          </>
+          <div className='flex items-center gap-1.5'>
+            {statusContent}
+            {kindBadge}
+            {isAdmin &&
+              (isFailure ? (
+                <FailureRecordDialog
+                  log={log}
+                  open={dialogOpen}
+                  onOpenChange={setDialogOpen}
+                />
+              ) : (
+                <ArchiveDialog
+                  log={log}
+                  open={dialogOpen}
+                  onOpenChange={setDialogOpen}
+                />
+              ))}
+          </div>
         )
       },
       meta: { label: t('Status Code'), mobileHidden: true },
-      size: 80,
-      minSize: 80,
-      maxSize: 140,
+      size: 120,
+      minSize: 100,
+      maxSize: 190,
     },
 
     {

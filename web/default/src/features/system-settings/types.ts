@@ -307,6 +307,9 @@ export type OperationsSettings = {
   'conversation_archive_setting.r2_enabled': boolean
   'conversation_archive_setting.delete_local_dump_after_upload': boolean
   'conversation_archive_setting.retention_days': number
+  'failure_record_setting.enabled': boolean
+  'failure_record_setting.retention_days': number
+  'failure_record_setting.max_body_kb': number
   'performance_setting.disk_cache_enabled': boolean
   'performance_setting.disk_cache_threshold_mb': number
   'performance_setting.disk_cache_max_size_mb': number

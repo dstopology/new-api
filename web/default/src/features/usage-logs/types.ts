@@ -120,6 +120,10 @@ export interface LogOtherData {
   }
   request_path?: string
   status_code?: number | string
+  // Inbound request body size in bytes (Content-Length). Used for the fast
+  // "纯文 / 生图" preliminary tag in the usage log — image payloads are
+  // dominated by base64 and produce large bodies.
+  request_body_size?: number
   user_agent?: string
   session_id?: string
   session_source?: string
@@ -346,6 +350,32 @@ export interface GetLogArchiveResponse {
   success: boolean
   message?: string
   data?: LogArchiveDetail
+}
+
+export interface RequestFailureLogDetail {
+  id: number
+  created_at: number
+  expires_at: number
+  user_id: number
+  username: string
+  token_name: string
+  group: string
+  channel_id: number
+  channel_name: string
+  model_name: string
+  status_code: number
+  error_type: string
+  error_code: string
+  request_id: string
+  upstream_request_id: string
+  request_body: string
+  error_detail: string
+}
+
+export interface GetRequestFailureLogResponse {
+  success: boolean
+  message?: string
+  data?: RequestFailureLogDetail | null
 }
 
 // ============================================================================

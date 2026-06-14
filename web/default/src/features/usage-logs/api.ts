@@ -22,6 +22,7 @@ import type {
   GetLogsParams,
   GetLogsResponse,
   GetLogArchiveResponse,
+  GetRequestFailureLogResponse,
   GetLogStatsParams,
   GetLogStatsResponse,
   GetMidjourneyLogsParams,
@@ -91,6 +92,13 @@ export async function getLogArchive(
 ): Promise<GetLogArchiveResponse> {
   const query = part ? `?part=${encodeURIComponent(part)}` : ''
   const res = await api.get(`/api/log/${logId}/archive${query}`)
+  return res.data
+}
+
+export async function getRequestFailureLog(
+  logId: number
+): Promise<GetRequestFailureLogResponse> {
+  const res = await api.get(`/api/log/${logId}/failure_record`)
   return res.data
 }
 

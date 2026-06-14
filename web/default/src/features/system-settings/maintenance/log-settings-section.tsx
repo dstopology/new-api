@@ -64,6 +64,9 @@ const logSettingsSchema = z.object({
   ConversationArchiveR2Enabled: z.boolean(),
   ConversationArchiveDeleteLocalDumpAfterUpload: z.boolean(),
   ConversationArchiveRetentionDays: z.number().int().min(0).max(3650),
+  FailureRecordEnabled: z.boolean(),
+  FailureRecordRetentionDays: z.number().int().min(0).max(3650),
+  FailureRecordMaxBodyKB: z.number().int().min(1).max(10240),
 })
 
 type LogSettingsFormValues = z.infer<typeof logSettingsSchema>
@@ -75,6 +78,9 @@ type LogSettingsSectionProps = {
   defaultArchiveR2Enabled: boolean
   defaultArchiveDeleteLocalDumpAfterUpload: boolean
   defaultArchiveRetentionDays: number
+  defaultFailureRecordEnabled: boolean
+  defaultFailureRecordRetentionDays: number
+  defaultFailureRecordMaxBodyKB: number
 }
 
 const HOURS_IN_DAY = 24
@@ -109,6 +115,9 @@ export function LogSettingsSection({
   defaultArchiveR2Enabled,
   defaultArchiveDeleteLocalDumpAfterUpload,
   defaultArchiveRetentionDays,
+  defaultFailureRecordEnabled,
+  defaultFailureRecordRetentionDays,
+  defaultFailureRecordMaxBodyKB,
 }: LogSettingsSectionProps) {
   const { t } = useTranslation()
   const updateOption = useUpdateOption()
@@ -122,6 +131,9 @@ export function LogSettingsSection({
       ConversationArchiveDeleteLocalDumpAfterUpload:
         defaultArchiveDeleteLocalDumpAfterUpload,
       ConversationArchiveRetentionDays: defaultArchiveRetentionDays,
+      FailureRecordEnabled: defaultFailureRecordEnabled,
+      FailureRecordRetentionDays: defaultFailureRecordRetentionDays,
+      FailureRecordMaxBodyKB: defaultFailureRecordMaxBodyKB,
     },
   })
 
@@ -140,6 +152,9 @@ export function LogSettingsSection({
       ConversationArchiveDeleteLocalDumpAfterUpload:
         defaultArchiveDeleteLocalDumpAfterUpload,
       ConversationArchiveRetentionDays: defaultArchiveRetentionDays,
+      FailureRecordEnabled: defaultFailureRecordEnabled,
+      FailureRecordRetentionDays: defaultFailureRecordRetentionDays,
+      FailureRecordMaxBodyKB: defaultFailureRecordMaxBodyKB,
     })
   }, [
     defaultArchiveDeleteLocalDumpAfterUpload,
@@ -148,6 +163,9 @@ export function LogSettingsSection({
     defaultArchiveR2Enabled,
     defaultArchiveRetentionDays,
     defaultEnabled,
+    defaultFailureRecordEnabled,
+    defaultFailureRecordRetentionDays,
+    defaultFailureRecordMaxBodyKB,
     form,
   ])
 
@@ -202,6 +220,26 @@ export function LogSettingsSection({
       updates.push({
         key: 'conversation_archive_setting.retention_days',
         value: values.ConversationArchiveRetentionDays,
+      })
+    }
+    if (values.FailureRecordEnabled !== defaultFailureRecordEnabled) {
+      updates.push({
+        key: 'failure_record_setting.enabled',
+        value: values.FailureRecordEnabled,
+      })
+    }
+    if (
+      values.FailureRecordRetentionDays !== defaultFailureRecordRetentionDays
+    ) {
+      updates.push({
+        key: 'failure_record_setting.retention_days',
+        value: values.FailureRecordRetentionDays,
+      })
+    }
+    if (values.FailureRecordMaxBodyKB !== defaultFailureRecordMaxBodyKB) {
+      updates.push({
+        key: 'failure_record_setting.max_body_kb',
+        value: values.FailureRecordMaxBodyKB,
       })
     }
     for (const update of updates) {
@@ -407,6 +445,104 @@ export function LogSettingsSection({
                   <FormDescription>
                     {t(
                       'Drop normal and abnormal archive date tables older than this many days. Set 0 to keep database tables.'
+                    )}
+                  </FormDescription>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
+          </SettingsControlGroup>
+
+          <SettingsControlGroup className='space-y-3'>
+            <div>
+              <h4 className='text-sm font-medium'>
+                {t('Failed request recording')}
+              </h4>
+              <p className='text-muted-foreground text-sm'>
+                {t(
+                  'Store the raw request body of FAILED relay requests for security troubleshooting (judging false-positive bans and whether violating content reached the account pool). Stored unmasked on the main log DB and purged after the retention period. RPM rate-limit 429s never reach this path.'
+                )}
+              </p>
+            </div>
+            <FormField
+              control={form.control}
+              name='FailureRecordEnabled'
+              render={({ field }) => (
+                <SettingsSwitchItem>
+                  <SettingsSwitchContent>
+                    <FormLabel>{t('Record failed request body')}</FormLabel>
+                    <FormDescription>
+                      {t(
+                        'Only failed requests are recorded; successful traffic is never stored. Controlled entirely here — no environment variable needed.'
+                      )}
+                    </FormDescription>
+                  </SettingsSwitchContent>
+                  <FormControl>
+                    <Switch
+                      checked={field.value}
+                      onCheckedChange={field.onChange}
+                    />
+                  </FormControl>
+                  <FormMessage />
+                </SettingsSwitchItem>
+              )}
+            />
+            <FormField
+              control={form.control}
+              name='FailureRecordRetentionDays'
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>{t('Failure record retention days')}</FormLabel>
+                  <FormControl>
+                    <Input
+                      type='number'
+                      min={0}
+                      max={3650}
+                      step={1}
+                      value={Number.isFinite(field.value) ? field.value : ''}
+                      onChange={(event) =>
+                        field.onChange(
+                          event.target.value === ''
+                            ? 0
+                            : Number(event.target.value)
+                        )
+                      }
+                    />
+                  </FormControl>
+                  <FormDescription>
+                    {t(
+                      'Delete failure records older than this many days. Set 0 to keep them indefinitely.'
+                    )}
+                  </FormDescription>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
+            <FormField
+              control={form.control}
+              name='FailureRecordMaxBodyKB'
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>{t('Max recorded body size (KB)')}</FormLabel>
+                  <FormControl>
+                    <Input
+                      type='number'
+                      min={1}
+                      max={10240}
+                      step={1}
+                      value={Number.isFinite(field.value) ? field.value : ''}
+                      onChange={(event) =>
+                        field.onChange(
+                          event.target.value === ''
+                            ? 1
+                            : Number(event.target.value)
+                        )
+                      }
+                    />
+                  </FormControl>
+                  <FormDescription>
+                    {t(
+                      'Larger bodies are truncated. Violating text is small, so this mainly bounds large base64 image payloads.'
                     )}
                   </FormDescription>
                   <FormMessage />

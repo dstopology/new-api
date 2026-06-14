@@ -125,6 +125,9 @@ func main() {
 
 	conversationarchive.StartDumpTask()
 
+	// 失败请求原始记录的过期清理（受 failure_record_setting.retention_days 控制）
+	service.StartRequestFailureLogCleanup()
+
 	// Wire task polling adaptor factory (breaks service -> relay import cycle)
 	service.GetTaskAdaptorFunc = func(platform constant.TaskPlatform) service.TaskPollingAdaptor {
 		a := relay.GetTaskAdaptor(platform)
