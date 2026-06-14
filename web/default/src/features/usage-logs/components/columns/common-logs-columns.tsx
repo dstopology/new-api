@@ -47,6 +47,7 @@ import {
   getLogStatusCode,
   getStatusCodeVariant,
   getRequestContentKind,
+  getRequestVolumeKind,
   hasAnyCacheTokens,
   parseLogOther,
   isViolationFeeLog,
@@ -748,6 +749,15 @@ export function useCommonLogsColumns(isAdmin: boolean): ColumnDef<UsageLog>[] {
             copyable={false}
           />
         ) : null
+        const volumeKind = isConsume ? getRequestVolumeKind(other) : null
+        const volumeBadge = volumeKind ? (
+          <StatusBadge
+            label={volumeKind === 'burst' ? t('Burst') : t('Stable')}
+            variant={volumeKind === 'burst' ? 'red' : 'neutral'}
+            size='sm'
+            copyable={false}
+          />
+        ) : null
 
         const isFailure = statusCode >= 400
         const statusContent = isAdmin ? (
@@ -774,6 +784,7 @@ export function useCommonLogsColumns(isAdmin: boolean): ColumnDef<UsageLog>[] {
           <div className='flex items-center gap-1.5'>
             {statusContent}
             {kindBadge}
+            {volumeBadge}
             {isAdmin &&
               (isFailure ? (
                 <FailureRecordDialog
@@ -792,9 +803,9 @@ export function useCommonLogsColumns(isAdmin: boolean): ColumnDef<UsageLog>[] {
         )
       },
       meta: { label: t('Status Code'), mobileHidden: true },
-      size: 120,
-      minSize: 100,
-      maxSize: 190,
+      size: 150,
+      minSize: 110,
+      maxSize: 240,
     },
 
     {

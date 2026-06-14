@@ -135,29 +135,37 @@ export function getLogStatusCode(
 }
 
 /**
- * Body size (bytes) at/above which a request is preliminarily flagged as image
- * ("生图"). Image payloads are dominated by base64, so a large body is a fast,
- * cheap signal. Accurate billing flags (image_generation_call / image) take
- * precedence when present. Tune this threshold to your "suspicious body size".
+ * Inbound body size (bytes) at/above which a request is flagged as a volume
+ * spike ("瞬高量") rather than steady traffic ("稳定量"). This is PURELY a size
+ * signal and says nothing about content — large text/code requests (e.g. coding
+ * agents) are a legitimate spike. Tune to your expected per-request body size.
  */
-export const SUSPICIOUS_BODY_SIZE_BYTES = 256 * 1024 // 256KB
+export const BURST_BODY_SIZE_BYTES = 256 * 1024 // 256KB
 
 /**
- * Preliminary classification of a consume request as image ("生图") vs
- * text-only ("纯文"), for the usage-log tag. Prefers the accurate
- * image-billing flags, then falls back to the inbound body-size heuristic.
+ * Content type of a consume request: image ("生图") vs text-only ("纯文"). Uses
+ * ONLY the accurate image-billing flags (real image generation / image output);
+ * body size is intentionally not considered, since a large body does not imply
+ * image content.
  */
 export function getRequestContentKind(
   other: LogOtherData | null
 ): 'image' | 'text' {
-  if (other) {
-    if (other.image_generation_call || other.image) return 'image'
-    const size = other.request_body_size
-    if (typeof size === 'number' && size >= SUSPICIOUS_BODY_SIZE_BYTES) {
-      return 'image'
-    }
-  }
+  if (other && (other.image_generation_call || other.image)) return 'image'
   return 'text'
+}
+
+/**
+ * Volume level of a consume request by inbound body size: a spike ("瞬高量") at or
+ * above BURST_BODY_SIZE_BYTES, otherwise steady ("稳定量"). Returns null when the
+ * size is unknown (legacy logs / chunked requests without Content-Length).
+ */
+export function getRequestVolumeKind(
+  other: LogOtherData | null
+): 'burst' | 'stable' | null {
+  const size = other?.request_body_size
+  if (typeof size !== 'number' || size <= 0) return null
+  return size >= BURST_BODY_SIZE_BYTES ? 'burst' : 'stable'
 }
 
 export function getStatusCodeVariant(

@@ -2693,6 +2693,8 @@
     "Non-stream": "Non-stream",
     "Image-gen": "Image",
     "Text-only": "Text",
+    "Burst": "Burst",
+    "Stable": "Stable",
     "Non-stream compact requests": "Non-stream compact requests",
     "Non-stream only keeps streaming compact requests on this channel": "Non-stream only keeps streaming compact requests on this channel",
     "Non-zero invitation rewards and top-up rebates require compliance confirmation in Payment Gateway settings.": "Non-zero invitation rewards and top-up rebates require compliance confirmation in Payment Gateway settings.",

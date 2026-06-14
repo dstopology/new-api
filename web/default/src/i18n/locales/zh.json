@@ -2711,6 +2711,8 @@
     "Non-stream": "非流式",
     "Image-gen": "生图",
     "Text-only": "纯文",
+    "Burst": "瞬高量",
+    "Stable": "稳定量",
     "Non-stream compact requests": "非流式 compact 请求",
     "Non-stream only keeps streaming compact requests on this channel": "仅非流式时，流式 compact 请求仍保留在本渠道",
     "Non-zero invitation rewards and top-up rebates require compliance confirmation in Payment Gateway settings.": "非零邀请奖励和充值返利需要先在支付网关设置中确认合规条款。",
