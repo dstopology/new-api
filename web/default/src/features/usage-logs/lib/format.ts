@@ -135,12 +135,14 @@ export function getLogStatusCode(
 }
 
 /**
- * Inbound body size (bytes) at/above which a request is flagged as a volume
- * spike ("瞬高量") rather than steady traffic ("稳定量"). This is PURELY a size
- * signal and says nothing about content — large text/code requests (e.g. coding
- * agents) are a legitimate spike. Tune to your expected per-request body size.
+ * Volume-spike ("瞬高量") thresholds. A request is a spike only when its inbound
+ * body is BOTH large in absolute terms AND inflated relative to its token count
+ * — i.e. bytes that don't correspond to tokens (base64 image/binary). This avoids
+ * flagging long text/code contexts (whose bytes grow in step with tokens, keeping
+ * the ratio low) as spikes. Both thresholds are tunable.
  */
-export const BURST_BODY_SIZE_BYTES = 256 * 1024 // 256KB
+export const BURST_BODY_SIZE_FLOOR_BYTES = 64 * 1024 // 64KB absolute floor
+export const BURST_BYTES_PER_TOKEN = 40 // bytes per prompt token
 
 /**
  * Content type of a consume request: image ("生图") vs text-only ("纯文"). Uses
@@ -156,16 +158,23 @@ export function getRequestContentKind(
 }
 
 /**
- * Volume level of a consume request by inbound body size: a spike ("瞬高量") at or
- * above BURST_BODY_SIZE_BYTES, otherwise steady ("稳定量"). Returns null when the
- * size is unknown (legacy logs / chunked requests without Content-Length).
+ * Volume level of a consume request: a spike ("瞬高量") when the inbound body is
+ * both >= BURST_BODY_SIZE_FLOOR_BYTES and inflated beyond BURST_BYTES_PER_TOKEN
+ * bytes per prompt token (base64-heavy), otherwise steady ("稳定量"). Normalizing
+ * by tokens keeps long text contexts (bytes grow with tokens → low ratio) out of
+ * the spike bucket. Returns null when size or prompt tokens are unknown.
  */
 export function getRequestVolumeKind(
-  other: LogOtherData | null
+  other: LogOtherData | null,
+  promptTokens: number
 ): 'burst' | 'stable' | null {
   const size = other?.request_body_size
   if (typeof size !== 'number' || size <= 0) return null
-  return size >= BURST_BODY_SIZE_BYTES ? 'burst' : 'stable'
+  if (!promptTokens || promptTokens <= 0) return null
+  const isBurst =
+    size >= BURST_BODY_SIZE_FLOOR_BYTES &&
+    size / promptTokens >= BURST_BYTES_PER_TOKEN
+  return isBurst ? 'burst' : 'stable'
 }
 
 export function getStatusCodeVariant(

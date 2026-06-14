@@ -749,7 +749,9 @@ export function useCommonLogsColumns(isAdmin: boolean): ColumnDef<UsageLog>[] {
             copyable={false}
           />
         ) : null
-        const volumeKind = isConsume ? getRequestVolumeKind(other) : null
+        const volumeKind = isConsume
+          ? getRequestVolumeKind(other, log.prompt_tokens)
+          : null
         const volumeBadge = volumeKind ? (
           <StatusBadge
             label={volumeKind === 'burst' ? t('Burst') : t('Stable')}
