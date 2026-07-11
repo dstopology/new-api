@@ -26,6 +26,7 @@ import {
   LayoutDashboard,
   ListTodo,
   MessageSquare,
+  Puzzle,
   Radio,
   Settings,
   Ticket,
@@ -135,6 +136,11 @@ export function useSidebarData(): SidebarData {
             title: t('Redemption Codes'),
             url: '/redemption-codes',
             icon: Ticket,
+          },
+          {
+            title: t('External Skills'),
+            url: '/external-skills',
+            icon: Puzzle,
           },
           {
             title: t('Subscription Management'),
