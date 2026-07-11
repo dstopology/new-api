@@ -380,6 +380,16 @@ func SetApiRouter(router *gin.Engine) {
 			vendorRoute.DELETE("/:id", controller.DeleteVendorMeta)
 		}
 
+		externalSkillRoute := apiRouter.Group("/external-skills")
+		externalSkillRoute.Use(middleware.AdminAuth())
+		{
+			externalSkillRoute.GET("", controller.AdminListExternalSkills)
+			externalSkillRoute.GET("/:id", controller.AdminGetExternalSkill)
+			externalSkillRoute.POST("", controller.AdminCreateExternalSkill)
+			externalSkillRoute.PUT("/:id", controller.AdminUpdateExternalSkill)
+			externalSkillRoute.DELETE("/:id", controller.AdminDeleteExternalSkill)
+		}
+
 		modelsRoute := apiRouter.Group("/models")
 		modelsRoute.Use(middleware.AdminAuth())
 		{

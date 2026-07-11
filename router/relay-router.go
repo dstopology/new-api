@@ -15,6 +15,13 @@ func SetRelayRouter(router *gin.Engine) {
 	router.Use(middleware.DecompressRequestMiddleware())
 	router.Use(middleware.BodyStorageCleanup()) // 清理请求体存储
 	router.Use(middleware.StatsMiddleware())
+	externalSkillsRouter := router.Group("/v1/external-skills")
+	externalSkillsRouter.Use(middleware.RouteTag("relay"))
+	{
+		externalSkillsRouter.GET("", controller.ListExternalSkills)
+		externalSkillsRouter.GET("/:name", controller.GetExternalSkill)
+		externalSkillsRouter.GET("/:name/content", controller.GetExternalSkillContent)
+	}
 	// https://platform.openai.com/docs/api-reference/introduction
 	modelsRouter := router.Group("/v1/models")
 	modelsRouter.Use(middleware.RouteTag("relay"))

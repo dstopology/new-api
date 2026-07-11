@@ -96,6 +96,8 @@ export const channelFormSchema = z.object({
   disable_image_generation: z.boolean().optional(),
   system_prompt: z.string().optional(),
   system_prompt_override: z.boolean().optional(),
+  user_prompt_addition_enabled: z.boolean().optional(),
+  user_prompt_addition: z.string().optional(),
   compact_replacement_channel_id: z.number().optional(),
   compact_replacement_scope: z.enum(['non_stream', 'all']).optional(),
   // Type-specific settings (stored in settings JSON)
@@ -157,6 +159,8 @@ export const CHANNEL_FORM_DEFAULT_VALUES: ChannelFormValues = {
   disable_image_generation: false,
   system_prompt: '',
   system_prompt_override: false,
+  user_prompt_addition_enabled: false,
+  user_prompt_addition: '',
   compact_replacement_channel_id: 0,
   compact_replacement_scope: 'non_stream',
   // Type-specific settings
@@ -196,6 +200,8 @@ export function transformChannelToFormDefaults(
     disable_image_generation: false,
     system_prompt: '',
     system_prompt_override: false,
+    user_prompt_addition_enabled: false,
+    user_prompt_addition: '',
     compact_replacement_channel_id: 0,
     compact_replacement_scope: 'non_stream' as 'non_stream' | 'all',
   }
@@ -211,6 +217,9 @@ export function transformChannelToFormDefaults(
         disable_image_generation: parsed.disable_image_generation === true,
         system_prompt: parsed.system_prompt || '',
         system_prompt_override: parsed.system_prompt_override || false,
+        user_prompt_addition_enabled:
+          parsed.user_prompt_addition_enabled || false,
+        user_prompt_addition: parsed.user_prompt_addition || '',
         compact_replacement_channel_id:
           Number(parsed.compact_replacement_channel_id) || 0,
         compact_replacement_scope:
@@ -325,9 +334,13 @@ function buildSettingJSON(formData: ChannelFormValues): string {
     disable_image_generation: formData.disable_image_generation === true,
     system_prompt: formData.system_prompt || '',
     system_prompt_override: formData.system_prompt_override || false,
+    user_prompt_addition_enabled:
+      formData.user_prompt_addition_enabled || false,
+    user_prompt_addition: formData.user_prompt_addition || '',
     compact_replacement_channel_id:
       Number(formData.compact_replacement_channel_id) || 0,
-    compact_replacement_scope: formData.compact_replacement_scope || 'non_stream',
+    compact_replacement_scope:
+      formData.compact_replacement_scope || 'non_stream',
   }
   return JSON.stringify(settingObj)
 }

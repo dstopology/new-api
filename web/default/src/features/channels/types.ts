@@ -87,6 +87,8 @@ export interface ChannelSettings {
   disable_image_generation?: boolean
   system_prompt?: string
   system_prompt_override?: boolean
+  user_prompt_addition_enabled?: boolean
+  user_prompt_addition?: string
   compact_replacement_channel_id?: number
   compact_replacement_scope?: 'non_stream' | 'all'
 }

@@ -138,6 +138,10 @@ export function SidebarModulesSection({
         title: t('Redeem codes'),
         description: t('Create and review invite or credit codes.'),
       },
+      external_skills: {
+        title: t('External Skills'),
+        description: t('Manage lightweight skills exposed by the public API.'),
+      },
       user: {
         title: t('Users'),
         description: t('Administer user accounts and roles.'),
