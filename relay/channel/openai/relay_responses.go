@@ -78,12 +78,18 @@ func OaiResponsesStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp
 
 	var usage = &dto.Usage{}
 	var responseTextBuilder strings.Builder
+	completionFallback := newResponsesStreamCompletionFallback()
 
 	helper.StreamScannerHandler(c, resp, info, func(data string, sr *helper.StreamResult) {
 		// 检查当前数据是否包含 completed 状态和 usage 信息
 		var streamResponse dto.ResponsesStreamResponse
 		if err := common.UnmarshalJsonStr(data, &streamResponse); err != nil {
 			logger.LogError(c, "failed to unmarshal stream response: "+err.Error())
+			sr.Error(err)
+			return
+		}
+		if err := completionFallback.Observe(data); err != nil {
+			logger.LogError(c, "failed to observe responses stream event: "+err.Error())
 			sr.Error(err)
 			return
 		}
@@ -128,6 +134,15 @@ func OaiResponsesStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp
 			}
 		}
 	})
+
+	if completionFallback.ShouldSynthesize(info) && !helper.IsStreamDownstreamGone(c) {
+		if err := completionFallback.SendCompleted(c, info); err != nil {
+			logger.LogError(c, "failed to synthesize response.completed: "+err.Error())
+			if info != nil && info.StreamStatus != nil {
+				info.StreamStatus.RecordError(err.Error())
+			}
+		}
+	}
 
 	if usage.CompletionTokens == 0 {
 		// 计算输出文本的 token 数量
