@@ -14,6 +14,7 @@ import (
 
 	"github.com/QuantumNous/new-api/constant"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
+	relayconstant "github.com/QuantumNous/new-api/relay/constant"
 	"github.com/QuantumNous/new-api/setting/operation_setting"
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/assert"
@@ -612,6 +613,17 @@ func TestStreamScannerHandler_StreamStatus_Timeout(t *testing.T) {
 	require.NotNil(t, info.StreamStatus)
 	assert.Equal(t, relaycommon.StreamEndReasonTimeout, info.StreamStatus.EndReason)
 	assert.False(t, info.StreamStatus.IsNormalEnd())
+}
+
+func TestGetStreamingTimeoutUsesLongerImageIdleWindow(t *testing.T) {
+	oldTimeout := constant.StreamingTimeout
+	constant.StreamingTimeout = 300
+	t.Cleanup(func() { constant.StreamingTimeout = oldTimeout })
+
+	require.Equal(t, 300*time.Second, getStreamingTimeout(&relaycommon.RelayInfo{}))
+	require.Equal(t, DefaultImageStreamTimeout, getStreamingTimeout(&relaycommon.RelayInfo{
+		RelayMode: relayconstant.RelayModeImagesEdits,
+	}))
 }
 
 func TestStreamScannerHandler_StreamStatus_SoftErrors(t *testing.T) {
