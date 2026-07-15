@@ -25,6 +25,7 @@ const (
 	InitialScannerBufferSize    = 64 << 10 // 64KB (64*1024)
 	DefaultMaxScannerBufferSize = 64 << 20 // 64MB (64*1024*1024) default SSE buffer size
 	DefaultPingInterval         = 10 * time.Second
+	DefaultImageStreamTimeout   = 15 * time.Minute
 )
 
 func getScannerBufferSize() int {
@@ -32,6 +33,17 @@ func getScannerBufferSize() int {
 		return constant.StreamScannerMaxBufferMB << 20
 	}
 	return DefaultMaxScannerBufferSize
+}
+
+func getStreamingTimeout(info *relaycommon.RelayInfo) time.Duration {
+	streamingTimeout := time.Duration(constant.StreamingTimeout) * time.Second
+	if streamingTimeout <= 0 {
+		streamingTimeout = 30 * time.Second
+	}
+	if info != nil && isImageRelayMode(info.RelayMode) && streamingTimeout < DefaultImageStreamTimeout {
+		streamingTimeout = DefaultImageStreamTimeout
+	}
+	return streamingTimeout
 }
 
 func StreamScannerHandler(c *gin.Context, resp *http.Response, info *relaycommon.RelayInfo, dataHandler func(data string, sr *StreamResult)) {
@@ -55,10 +67,7 @@ func StreamScannerHandler(c *gin.Context, resp *http.Response, info *relaycommon
 	}
 	defer closeRespBody()
 
-	streamingTimeout := time.Duration(constant.StreamingTimeout) * time.Second
-	if streamingTimeout <= 0 {
-		streamingTimeout = 30 * time.Second
-	}
+	streamingTimeout := getStreamingTimeout(info)
 
 	var (
 		stopChan   = make(chan bool, 3) // 增加缓冲区避免阻塞

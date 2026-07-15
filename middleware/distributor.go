@@ -193,12 +193,42 @@ func getModelFromRequest(c *gin.Context) (*ModelRequest, error) {
 		return modelRequest, nil
 	}
 
-	var modelRequest ModelRequest
-	err := common.UnmarshalBodyReusable(c, &modelRequest)
+	var formRequest struct {
+		Model  string `json:"model"`
+		Group  string `json:"group,omitempty"`
+		Stream any    `json:"stream,omitempty"`
+	}
+	err := common.UnmarshalBodyReusable(c, &formRequest)
 	if err != nil {
 		return nil, errors.New(i18n.T(c, i18n.MsgDistributorInvalidRequest, map[string]any{"Error": err.Error()}))
 	}
-	return &modelRequest, nil
+	stream, err := getFormBoolValue(formRequest.Stream, "stream")
+	if err != nil {
+		return nil, errors.New(i18n.T(c, i18n.MsgDistributorInvalidRequest, map[string]any{"Error": err.Error()}))
+	}
+	return &ModelRequest{
+		Model:  formRequest.Model,
+		Group:  formRequest.Group,
+		Stream: stream,
+	}, nil
+}
+
+func getFormBoolValue(value any, field string) (*bool, error) {
+	if value == nil {
+		return nil, nil
+	}
+	switch typed := value.(type) {
+	case bool:
+		return &typed, nil
+	case string:
+		parsed, err := strconv.ParseBool(typed)
+		if err != nil {
+			return nil, fmt.Errorf("%s must be a boolean", field)
+		}
+		return &parsed, nil
+	default:
+		return nil, fmt.Errorf("%s must be a boolean", field)
+	}
 }
 
 func getModelFromJSONBody(c *gin.Context) (*ModelRequest, error) {
@@ -388,11 +418,20 @@ func getModelRequest(c *gin.Context) (*ModelRequest, bool, error) {
 		contentType := c.ContentType()
 		if slices.Contains([]string{gin.MIMEPOSTForm, gin.MIMEMultipartPOSTForm}, contentType) {
 			req, err := getModelFromRequest(c)
-			if err == nil && req.Model != "" {
+			if err != nil {
+				return nil, false, err
+			}
+			if req.Model != "" {
 				modelRequest.Model = req.Model
 				modelRequest.Stream = req.Stream
 			}
 		}
+	}
+	if (strings.HasPrefix(c.Request.URL.Path, "/v1/images/generations") ||
+		strings.HasPrefix(c.Request.URL.Path, "/v1/images/edits")) &&
+		modelRequest.Stream == nil && common.IsGPTImageModel(modelRequest.Model) {
+		stream := true
+		modelRequest.Stream = &stream
 	}
 	if strings.HasPrefix(c.Request.URL.Path, "/v1/audio") {
 		relayMode := relayconstant.RelayModeAudioSpeech

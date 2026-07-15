@@ -68,15 +68,32 @@ jobs:
           envs: IMAGE_REF,DEPLOY_DIR,GHCR_USER,GHCR_TOKEN
           script: |
             set -eu
+            retry() {
+              max_attempts="$1"
+              shift
+              attempt=1
+              until "$@"; do
+                if [ "$attempt" -ge "$max_attempts" ]; then
+                  return 1
+                fi
+                sleep_seconds=$((attempt * 5))
+                echo "attempt ${attempt}/${max_attempts} failed; retrying in ${sleep_seconds}s"
+                sleep "$sleep_seconds"
+                attempt=$((attempt + 1))
+              done
+            }
+            login_ghcr() {
+              echo "$GHCR_TOKEN" | docker login ghcr.io -u "$GHCR_USER" --password-stdin
+            }
             cd "$DEPLOY_DIR"
             test -f docker-compose.yml
             test -f .env
             if [ -n "${GHCR_TOKEN:-}" ]; then
-              echo "$GHCR_TOKEN" | docker login ghcr.io -u "$GHCR_USER" --password-stdin
+              retry 5 login_ghcr
             fi
             printf '%s\n' 'services:' '  new-api:' "    image: ${IMAGE_REF}" > docker-compose.prod.yml
             docker compose -f docker-compose.yml -f docker-compose.prod.yml config >/dev/null
-            docker compose -f docker-compose.yml -f docker-compose.prod.yml pull new-api
+            retry 5 docker compose -f docker-compose.yml -f docker-compose.prod.yml pull new-api
             docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d
             docker compose -f docker-compose.yml -f docker-compose.prod.yml ps
             for i in $(seq 1 30); do
