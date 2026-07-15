@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"strconv"
 	"strings"
 
 	"github.com/QuantumNous/new-api/common"
@@ -151,9 +152,22 @@ func GetAndValidOpenAIImageRequest(c *gin.Context, relayMode int) (*dto.ImageReq
 			formData := c.Request.PostForm
 			imageRequest.Prompt = formData.Get("prompt")
 			imageRequest.Model = formData.Get("model")
-			imageRequest.N = common.GetPointer(uint(common.String2Int(formData.Get("n"))))
 			imageRequest.Quality = formData.Get("quality")
 			imageRequest.Size = formData.Get("size")
+			if formData.Has("n") {
+				n, err := strconv.ParseUint(formData.Get("n"), 10, 0)
+				if err != nil {
+					return nil, fmt.Errorf("n must be a non-negative integer: %w", err)
+				}
+				imageRequest.N = common.GetPointer(uint(n))
+			}
+			if formData.Has("stream") {
+				stream, err := strconv.ParseBool(formData.Get("stream"))
+				if err != nil {
+					return nil, fmt.Errorf("stream must be true or false: %w", err)
+				}
+				imageRequest.Stream = &stream
+			}
 			if imageValue := formData.Get("image"); imageValue != "" {
 				imageRequest.Image, _ = common.Marshal(imageValue)
 			}
@@ -163,13 +177,15 @@ func GetAndValidOpenAIImageRequest(c *gin.Context, relayMode int) (*dto.ImageReq
 					imageRequest.Quality = "standard"
 				}
 			}
-			if imageRequest.N == nil || *imageRequest.N == 0 {
+			if imageRequest.N == nil {
 				imageRequest.N = common.GetPointer(uint(1))
 			}
 
-			hasWatermark := formData.Has("watermark")
-			if hasWatermark {
-				watermark := formData.Get("watermark") == "true"
+			if formData.Has("watermark") {
+				watermark, err := strconv.ParseBool(formData.Get("watermark"))
+				if err != nil {
+					return nil, fmt.Errorf("watermark must be true or false: %w", err)
+				}
 				imageRequest.Watermark = &watermark
 			}
 			break
@@ -218,9 +234,12 @@ func GetAndValidOpenAIImageRequest(c *gin.Context, relayMode int) (*dto.ImageReq
 		//	return nil, errors.New("prompt is required")
 		//}
 
-		if imageRequest.N == nil || *imageRequest.N == 0 {
+		if imageRequest.N == nil {
 			imageRequest.N = common.GetPointer(uint(1))
 		}
+	}
+	if imageRequest.Stream == nil && common.IsGPTImageModel(imageRequest.Model) {
+		imageRequest.Stream = common.GetPointer(true)
 	}
 
 	return imageRequest, nil

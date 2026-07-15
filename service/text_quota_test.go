@@ -583,6 +583,28 @@ func TestComposeTieredTextQuotaKeepsToolCallSurcharges(t *testing.T) {
 	require.Equal(t, 14000, quota)
 }
 
+func TestCalculateTextToolCallSurchargeSupportsStableWebSearch(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	recorder := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(recorder)
+	relayInfo := &relaycommon.RelayInfo{ResponsesUsageInfo: &relaycommon.ResponsesUsageInfo{
+		BuiltInTools: map[string]*relaycommon.BuildInToolInfo{
+			dto.BuildInToolWebSearch: {
+				ToolName:  dto.BuildInToolWebSearch,
+				CallCount: 2,
+			},
+		},
+	}}
+	summary := textQuotaSummary{ModelName: "gpt-5", GroupRatio: 1}
+
+	surcharge := calculateTextToolCallSurcharge(ctx, relayInfo, &summary)
+
+	require.Equal(t, 2, summary.WebSearchCallCount)
+	require.Equal(t, operation_setting.GetToolPrice(dto.BuildInToolWebSearch), summary.WebSearchPrice)
+	expected := operation_setting.GetToolPrice(dto.BuildInToolWebSearch) * 2 / 1000 * common.QuotaPerUnit
+	require.InDelta(t, expected, surcharge.InexactFloat64(), 0.001)
+}
+
 func TestComposeTieredTextQuotaFallbackKeepsToolCallSurcharges(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	w := httptest.NewRecorder()

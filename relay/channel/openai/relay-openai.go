@@ -990,7 +990,6 @@ func OpenaiHandlerWithUsage(c *gin.Context, info *relaycommon.RelayInfo, resp *h
 	defer service.CloseResponseBodyGracefully(resp)
 
 	if info != nil && info.IsStream {
-		helper.StopProcessingKeepAlive(c)
 		if isEventStreamContentType(resp.Header.Get("Content-Type")) {
 			return OpenaiImageStreamHandler(c, info, resp)
 		}
@@ -1007,8 +1006,6 @@ func OpenaiHandlerWithUsage(c *gin.Context, info *relaycommon.RelayInfo, resp *h
 	if err != nil {
 		return nil, types.NewOpenAIError(err, types.ErrorCodeBadResponseBody, http.StatusInternalServerError)
 	}
-
-	helper.StopProcessingKeepAlive(c)
 
 	// 写入新的 response body
 	service.IOCopyBytesGracefully(c, resp, responseBody)
