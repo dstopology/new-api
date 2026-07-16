@@ -238,10 +238,6 @@ func GetAndValidOpenAIImageRequest(c *gin.Context, relayMode int) (*dto.ImageReq
 			imageRequest.N = common.GetPointer(uint(1))
 		}
 	}
-	if imageRequest.Stream == nil && common.IsGPTImageModel(imageRequest.Model) {
-		imageRequest.Stream = common.GetPointer(true)
-	}
-
 	return imageRequest, nil
 }
 

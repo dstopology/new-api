@@ -63,20 +63,21 @@ func TestImageEditMultipartDefaultsNOnlyWhenAbsent(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, request.N)
 	require.Equal(t, uint(1), *request.N)
-	require.NotNil(t, request.Stream)
-	require.True(t, *request.Stream)
+	require.Nil(t, request.Stream)
 }
 
-func TestImageGenerationDefaultsGPTImageToStreamAndPreservesFalse(t *testing.T) {
+func TestImageGenerationPreservesStreamSemantics(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
 	for _, test := range []struct {
 		name       string
 		body       string
+		wantNil    bool
 		wantStream bool
 	}{
-		{name: "absent defaults true", body: `{"model":"gpt-image-2","prompt":"draw"}`, wantStream: true},
+		{name: "absent remains non-stream", body: `{"model":"gpt-image-2","prompt":"draw"}`, wantNil: true},
 		{name: "explicit false preserved", body: `{"model":"gpt-image-2","prompt":"draw","stream":false}`, wantStream: false},
+		{name: "explicit true preserved", body: `{"model":"gpt-image-2","prompt":"draw","stream":true}`, wantStream: true},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			recorder := httptest.NewRecorder()
@@ -87,6 +88,10 @@ func TestImageGenerationDefaultsGPTImageToStreamAndPreservesFalse(t *testing.T) 
 			request, err := GetAndValidOpenAIImageRequest(ctx, relayconstant.RelayModeImagesGenerations)
 
 			require.NoError(t, err)
+			if test.wantNil {
+				require.Nil(t, request.Stream)
+				return
+			}
 			require.NotNil(t, request.Stream)
 			require.Equal(t, test.wantStream, *request.Stream)
 		})

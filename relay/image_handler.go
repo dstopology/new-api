@@ -15,6 +15,7 @@ import (
 	"github.com/QuantumNous/new-api/relay/helper"
 	"github.com/QuantumNous/new-api/service"
 	"github.com/QuantumNous/new-api/setting/model_setting"
+	"github.com/QuantumNous/new-api/setting/operation_setting"
 	"github.com/QuantumNous/new-api/types"
 
 	"github.com/gin-gonic/gin"
@@ -50,9 +51,13 @@ func ImageHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *type
 	}
 	adaptor.Init(info)
 
-	// Do not emit HTTP 102 interim responses for non-stream image requests.
-	// Cloudflare can treat 102 as an origin failure and return a 500 before the
-	// upstream image response arrives. Streaming requests already use SSE pings.
+	if !info.IsStream && info.ApiType == constant.APITypeOpenAI {
+		pingEnabled, interval := helper.RelayPingConfig(info, operation_setting.GetGeneralSetting())
+		if pingEnabled {
+			stopProcessingKeepAlive := helper.StartProcessingKeepAlive(c, interval)
+			defer stopProcessingKeepAlive()
+		}
+	}
 
 	var requestBody io.Reader
 
