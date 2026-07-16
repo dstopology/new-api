@@ -8,6 +8,11 @@ on:
         required: true
         default: true
         type: boolean
+      prepare_server:
+        description: Pull the image on the server without restarting the service
+        required: true
+        default: false
+        type: boolean
 
 permissions:
   contents: read
@@ -59,11 +64,12 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
-      - name: Deploy to server
-        if: ${{ inputs.deploy }}
+      - name: Prepare or deploy on server
+        if: ${{ inputs.deploy || inputs.prepare_server }}
         uses: appleboy/ssh-action@v1.2.0
         env:
           IMAGE_REF: ${{ steps.image.outputs.sha }}
+          DEPLOY: ${{ inputs.deploy }}
           DEPLOY_DIR: ${{ secrets.NEW_API_DEPLOY_DIR || '/home/elissias/docker-compose/new-api' }}
           GHCR_USER: ${{ github.actor }}
           GHCR_TOKEN: ${{ secrets.GHCR_TOKEN || github.token }}
@@ -72,7 +78,7 @@ jobs:
           port: ${{ secrets.SSH_PORT || '22' }}
           username: ${{ secrets.SSH_USER || 'elissias' }}
           key: ${{ secrets.SSH_KEY }}
-          envs: IMAGE_REF,DEPLOY_DIR,GHCR_USER,GHCR_TOKEN
+          envs: IMAGE_REF,DEPLOY,DEPLOY_DIR,GHCR_USER,GHCR_TOKEN
           script: |
             set -eu
             retry() {
@@ -98,9 +104,13 @@ jobs:
             if [ -n "${GHCR_TOKEN:-}" ]; then
               retry 5 login_ghcr
             fi
+            retry 5 docker pull "$IMAGE_REF"
+            if [ "$DEPLOY" != "true" ]; then
+              docker image inspect "$IMAGE_REF" --format 'prepared {{.Id}}'
+              exit 0
+            fi
             printf '%s\n' 'services:' '  new-api:' "    image: ${IMAGE_REF}" > docker-compose.prod.yml
             docker compose -f docker-compose.yml -f docker-compose.prod.yml config >/dev/null
-            retry 5 docker compose -f docker-compose.yml -f docker-compose.prod.yml pull new-api
             docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d
             docker compose -f docker-compose.yml -f docker-compose.prod.yml ps
             for i in $(seq 1 30); do
