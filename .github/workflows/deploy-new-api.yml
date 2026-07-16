@@ -2,6 +2,12 @@ name: Deploy new-api
 
 on:
   workflow_dispatch:
+    inputs:
+      deploy:
+        description: Build the image and deploy it to the configured server
+        required: true
+        default: true
+        type: boolean
 
 permissions:
   contents: read
@@ -54,6 +60,7 @@ jobs:
           cache-to: type=gha,mode=max
 
       - name: Deploy to server
+        if: ${{ inputs.deploy }}
         uses: appleboy/ssh-action@v1.2.0
         env:
           IMAGE_REF: ${{ steps.image.outputs.sha }}

@@ -43,6 +43,7 @@ export const userSchema = z.object({
   quota: z.number(),
   used_quota: z.number(),
   request_count: z.number(),
+  rpm_limits: z.record(z.string(), z.number().int().min(0)).optional(),
   group: z.string(),
   aff_code: z.string().optional(),
   aff_count: z.number().optional(),

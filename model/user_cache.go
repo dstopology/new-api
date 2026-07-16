@@ -2,6 +2,7 @@ package model
 
 import (
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/QuantumNous/new-api/common"
@@ -15,14 +16,15 @@ import (
 
 // UserBase struct remains the same as it represents the cached data structure
 type UserBase struct {
-	Id       int    `json:"id"`
-	Group    string `json:"group"`
-	Email    string `json:"email"`
-	Quota    int    `json:"quota"`
-	Role     int    `json:"role"`
-	Status   int    `json:"status"`
-	Username string `json:"username"`
-	Setting  string `json:"setting"`
+	Id        int    `json:"id"`
+	Group     string `json:"group"`
+	Email     string `json:"email"`
+	Quota     int    `json:"quota"`
+	Role      int    `json:"role"`
+	Status    int    `json:"status"`
+	Username  string `json:"username"`
+	Setting   string `json:"setting"`
+	RpmLimits string `json:"rpm_limits"`
 }
 
 func (user *UserBase) WriteContext(c *gin.Context) {
@@ -108,17 +110,26 @@ func GetUserCache(userId int) (userCache *UserBase, err error) {
 
 	// Create cache object from user data
 	userCache = &UserBase{
-		Id:       user.Id,
-		Group:    user.Group,
-		Quota:    user.Quota,
-		Role:     user.Role,
-		Status:   user.Status,
-		Username: user.Username,
-		Setting:  user.Setting,
-		Email:    user.Email,
+		Id:        user.Id,
+		Group:     user.Group,
+		Quota:     user.Quota,
+		Role:      user.Role,
+		Status:    user.Status,
+		Username:  user.Username,
+		Setting:   user.Setting,
+		Email:     user.Email,
+		RpmLimits: user.RpmLimits,
 	}
 
 	return userCache, nil
+}
+
+func (user *UserBase) GetRpmLimits() map[string]int {
+	return parseUserRpmLimits(user.RpmLimits)
+}
+
+func (user *UserBase) GetRpmLimit(group string) int {
+	return user.GetRpmLimits()[strings.TrimSpace(group)]
 }
 
 func cacheGetUserBase(userId int) (*UserBase, error) {

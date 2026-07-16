@@ -99,6 +99,7 @@ type User struct {
 	Quota            int            `json:"quota" gorm:"type:int;default:0"`
 	UsedQuota        int            `json:"used_quota" gorm:"type:int;default:0;column:used_quota"` // used quota
 	RequestCount     int            `json:"request_count" gorm:"type:int;default:0;"`               // request number
+	RpmLimits        string         `json:"-" gorm:"type:text;column:rpm_limits"`
 	Group            string         `json:"group" gorm:"type:varchar(64);default:'default'"`
 	AffCode          string         `json:"aff_code" gorm:"type:varchar(32);column:aff_code;uniqueIndex"`
 	AffCount         int            `json:"aff_count" gorm:"type:int;default:0;column:aff_count"`
@@ -116,14 +117,15 @@ type User struct {
 
 func (user *User) ToBaseUser() *UserBase {
 	cache := &UserBase{
-		Id:       user.Id,
-		Group:    user.Group,
-		Quota:    user.Quota,
-		Role:     user.Role,
-		Status:   user.Status,
-		Username: user.Username,
-		Setting:  user.Setting,
-		Email:    user.Email,
+		Id:        user.Id,
+		Group:     user.Group,
+		Quota:     user.Quota,
+		Role:      user.Role,
+		Status:    user.Status,
+		Username:  user.Username,
+		Setting:   user.Setting,
+		Email:     user.Email,
+		RpmLimits: user.RpmLimits,
 	}
 	return cache
 }
@@ -157,6 +159,26 @@ func (user *User) SetSetting(setting dto.UserSetting) {
 		return
 	}
 	user.Setting = string(settingBytes)
+}
+
+func parseUserRpmLimits(raw string) map[string]int {
+	limits := make(map[string]int)
+	if strings.TrimSpace(raw) == "" {
+		return limits
+	}
+	if err := common.UnmarshalJsonStr(raw, &limits); err != nil {
+		return make(map[string]int)
+	}
+	for group, limit := range limits {
+		if strings.TrimSpace(group) == "" || limit <= 0 {
+			delete(limits, group)
+		}
+	}
+	return limits
+}
+
+func (user *User) GetRpmLimits() map[string]int {
+	return parseUserRpmLimits(user.RpmLimits)
 }
 
 // 根据用户角色生成默认的边栏配置
@@ -877,6 +899,43 @@ func GetUserQuota(id int, fromDB bool) (quota int, err error) {
 func GetUserUsedQuota(id int) (quota int, err error) {
 	err = DB.Model(&User{}).Where("id = ?", id).Select("used_quota").Find(&quota).Error
 	return quota, err
+}
+
+func UpdateUserGroupRpmLimit(id int, group string, rpmLimit int) error {
+	group = strings.TrimSpace(group)
+	if group == "" {
+		return errors.New("group is empty")
+	}
+	if rpmLimit < 0 {
+		return errors.New("rpm limit cannot be negative")
+	}
+	err := DB.Transaction(func(tx *gorm.DB) error {
+		var user User
+		if err := withRowLock(tx).Select("id", "rpm_limits").First(&user, "id = ?", id).Error; err != nil {
+			return err
+		}
+
+		limits := user.GetRpmLimits()
+		if rpmLimit == 0 {
+			delete(limits, group)
+		} else {
+			limits[group] = rpmLimit
+		}
+
+		rawLimits := ""
+		if len(limits) > 0 {
+			encoded, err := common.Marshal(limits)
+			if err != nil {
+				return err
+			}
+			rawLimits = string(encoded)
+		}
+		return tx.Model(&User{}).Where("id = ?", id).Update("rpm_limits", rawLimits).Error
+	})
+	if err != nil {
+		return err
+	}
+	return invalidateUserCache(id)
 }
 
 func GetUserEmail(id int) (email string, err error) {

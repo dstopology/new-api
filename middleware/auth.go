@@ -269,6 +269,13 @@ func TokenAuthReadOnly() func(c *gin.Context) {
 		c.Set("id", token.UserId)
 		c.Set("token_id", token.Id)
 		c.Set("token_key", token.Key)
+		usingGroup := token.Group
+		if usingGroup == "" {
+			usingGroup = userCache.Group
+		}
+		if !enforceUserRPMRateLimit(c, token.UserId, usingGroup, userCache.GetRpmLimit(usingGroup)) {
+			return
+		}
 		c.Next()
 	}
 }
@@ -416,6 +423,10 @@ func TokenAuth() func(c *gin.Context) {
 
 		err = SetupContextForToken(c, token, parts...)
 		if err != nil {
+			return
+		}
+		usingGroup := common.GetContextKeyString(c, constant.ContextKeyUsingGroup)
+		if !enforceUserRPMRateLimit(c, token.UserId, usingGroup, userCache.GetRpmLimit(usingGroup)) {
 			return
 		}
 		c.Next()

@@ -134,6 +134,21 @@ export async function adjustUserQuota(
 }
 
 /**
+ * Update a user's requests-per-minute limit for one group.
+ */
+export async function updateUserRpmLimit(
+  userId: number,
+  group: string,
+  rpmLimit: number
+): Promise<ApiResponse<{ group: string; rpm_limit: number }>> {
+  const res = await api.put(`/api/user/${userId}/rpm_limits`, {
+    group,
+    rpm_limit: rpmLimit,
+  })
+  return res.data
+}
+
+/**
  * Reset user's Passkey registration
  */
 export async function resetUserPasskey(id: number): Promise<ApiResponse> {

@@ -18,7 +18,9 @@ For commercial licensing, please contact support@quantumnous.com
 */
 import { type ColumnDef } from '@tanstack/react-table'
 import { useTranslation } from 'react-i18next'
+import { useAuthStore } from '@/stores/auth-store'
 import { formatQuota, formatTimestamp } from '@/lib/format'
+import { canAccessSecuritySettings } from '@/lib/security-settings-access'
 import { cn } from '@/lib/utils'
 import { Checkbox } from '@/components/ui/checkbox'
 import { Progress } from '@/components/ui/progress'
@@ -44,6 +46,50 @@ function getQuotaProgressColor(percentage: number): string {
 
 export function useUsersColumns(): ColumnDef<User>[] {
   const { t } = useTranslation()
+  const currentUser = useAuthStore((state) => state.auth.user)
+  const canManageUserRpm = canAccessSecuritySettings(currentUser)
+  const rpmLimitColumn: ColumnDef<User> = {
+    accessorKey: 'rpm_limits',
+    header: ({ column }) => (
+      <DataTableColumnHeader column={column} title={t('RPM')} />
+    ),
+    cell: ({ row }) => {
+      const rpmLimits = Object.entries(row.original.rpm_limits ?? {}).sort(
+        ([left], [right]) => left.localeCompare(right)
+      )
+      if (rpmLimits.length === 0) {
+        return <span className='text-sm'>{t('Unlimited')}</span>
+      }
+
+      const summary = rpmLimits
+        .map(([group, limit]) => `${group}: ${limit.toLocaleString()}`)
+        .join(', ')
+      return (
+        <Tooltip>
+          <TooltipTrigger
+            render={
+              <span className='block max-w-[180px] cursor-help truncate text-sm tabular-nums' />
+            }
+          >
+            {summary}
+          </TooltipTrigger>
+          <TooltipContent>
+            <div className='flex flex-col gap-1 text-xs'>
+              {rpmLimits.map(([group, limit]) => (
+                <div key={group} className='flex justify-between gap-4'>
+                  <span>{group}</span>
+                  <span className='tabular-nums'>{limit.toLocaleString()}</span>
+                </div>
+              ))}
+            </div>
+          </TooltipContent>
+        </Tooltip>
+      )
+    },
+    enableSorting: false,
+    meta: { label: t('Group RPM limits'), mobileHidden: true },
+  }
+
   return [
     {
       id: 'select',
@@ -222,6 +268,7 @@ export function useUsersColumns(): ColumnDef<User>[] {
       },
       meta: { label: t('Quota') },
     },
+    ...(canManageUserRpm ? [rpmLimitColumn] : []),
     {
       accessorKey: 'group',
       header: ({ column }) => (

@@ -9,6 +9,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"unicode/utf8"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/dto"
@@ -243,6 +244,34 @@ func Register(c *gin.Context) {
 	return
 }
 
+const maxUserRpmLimit = 100_000_000
+
+type userManagementView struct {
+	*model.User
+	RpmLimits *map[string]int `json:"rpm_limits,omitempty"`
+}
+
+func canManageUserRpm(c *gin.Context) bool {
+	return common.CanAccessSecuritySettings(c.GetString("username"), c.GetInt("role"))
+}
+
+func buildUserManagementView(user *model.User, includeRpmLimit bool) userManagementView {
+	view := userManagementView{User: user}
+	if includeRpmLimit {
+		rpmLimits := user.GetRpmLimits()
+		view.RpmLimits = &rpmLimits
+	}
+	return view
+}
+
+func buildUserManagementViews(users []*model.User, includeRpmLimit bool) []userManagementView {
+	views := make([]userManagementView, 0, len(users))
+	for _, user := range users {
+		views = append(views, buildUserManagementView(user, includeRpmLimit))
+	}
+	return views
+}
+
 func GetAllUsers(c *gin.Context) {
 	pageInfo := common.GetPageQuery(c)
 	sortOptions := model.NewUserSortOptions(c.Query("sort_by"), c.Query("sort_order"))
@@ -253,7 +282,7 @@ func GetAllUsers(c *gin.Context) {
 	}
 
 	pageInfo.SetTotal(int(total))
-	pageInfo.SetItems(users)
+	pageInfo.SetItems(buildUserManagementViews(users, canManageUserRpm(c)))
 
 	common.ApiSuccess(c, pageInfo)
 	return
@@ -283,7 +312,7 @@ func SearchUsers(c *gin.Context) {
 	}
 
 	pageInfo.SetTotal(int(total))
-	pageInfo.SetItems(users)
+	pageInfo.SetItems(buildUserManagementViews(users, canManageUserRpm(c)))
 	common.ApiSuccess(c, pageInfo)
 	return
 }
@@ -311,7 +340,7 @@ func GetUser(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{
 		"success": true,
 		"message": "",
-		"data":    user,
+		"data":    buildUserManagementView(user, canManageUserRpm(c)),
 	})
 	return
 }
@@ -618,6 +647,53 @@ func UpdateUser(c *gin.Context) {
 		"message": "",
 	})
 	return
+}
+
+type updateUserRpmLimitRequest struct {
+	Group    string `json:"group"`
+	RpmLimit *int   `json:"rpm_limit"`
+}
+
+func UpdateUserGroupRpmLimit(c *gin.Context) {
+	if !canManageUserRpm(c) {
+		c.JSON(http.StatusForbidden, gin.H{
+			"success": false,
+			"message": common.TranslateMessage(c, i18n.MsgAuthInsufficientPrivilege),
+		})
+		return
+	}
+
+	userId, err := strconv.Atoi(c.Param("id"))
+	if err != nil || userId <= 0 {
+		common.ApiErrorI18n(c, i18n.MsgInvalidParams)
+		return
+	}
+
+	var req updateUserRpmLimitRequest
+	if err := common.DecodeJson(c.Request.Body, &req); err != nil || req.RpmLimit == nil {
+		common.ApiErrorI18n(c, i18n.MsgInvalidParams)
+		return
+	}
+	if *req.RpmLimit < 0 || *req.RpmLimit > maxUserRpmLimit {
+		common.ApiErrorI18n(c, i18n.MsgInvalidParams)
+		return
+	}
+	req.Group = strings.TrimSpace(req.Group)
+	if req.Group == "" || utf8.RuneCountInString(req.Group) > 64 {
+		common.ApiErrorI18n(c, i18n.MsgInvalidParams)
+		return
+	}
+
+	if _, err := model.GetUserById(userId, false); err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	if err := model.UpdateUserGroupRpmLimit(userId, req.Group, *req.RpmLimit); err != nil {
+		common.ApiError(c, err)
+		return
+	}
+
+	common.ApiSuccess(c, gin.H{"group": req.Group, "rpm_limit": *req.RpmLimit})
 }
 
 func AdminClearUserBinding(c *gin.Context) {

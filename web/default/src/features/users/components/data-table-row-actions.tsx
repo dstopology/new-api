@@ -18,6 +18,8 @@ For commercial licensing, please contact support@quantumnous.com
 */
 import { useState } from 'react'
 import { type Row } from '@tanstack/react-table'
+import { DashboardSpeed01Icon } from '@hugeicons/core-free-icons'
+import { HugeiconsIcon } from '@hugeicons/react'
 import {
   MoreHorizontal,
   Pencil,
@@ -33,6 +35,8 @@ import {
 } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
+import { useAuthStore } from '@/stores/auth-store'
+import { canAccessSecuritySettings } from '@/lib/security-settings-access'
 import { Button } from '@/components/ui/button'
 import {
   DropdownMenu,
@@ -54,6 +58,7 @@ import {
 import { getUserActionMessage } from '../lib'
 import { type User, type ManageUserAction } from '../types'
 import { UserBindingDialog } from './dialogs/user-binding-dialog'
+import { UserRpmLimitDialog } from './user-rpm-limit-dialog'
 import { useUsers } from './users-provider'
 
 interface DataTableRowActionsProps {
@@ -62,12 +67,15 @@ interface DataTableRowActionsProps {
 
 export function DataTableRowActions({ row }: DataTableRowActionsProps) {
   const { t } = useTranslation()
+  const currentUser = useAuthStore((state) => state.auth.user)
   const user = row.original
   const { setOpen, setCurrentRow, triggerRefresh } = useUsers()
   const [resetPasskeyOpen, setResetPasskeyOpen] = useState(false)
   const [resetTwoFAOpen, setResetTwoFAOpen] = useState(false)
   const [bindingDialogOpen, setBindingDialogOpen] = useState(false)
   const [subscriptionsDialogOpen, setSubscriptionsDialogOpen] = useState(false)
+  const [rpmLimitDialogOpen, setRpmLimitDialogOpen] = useState(false)
+  const canManageUserRpm = canAccessSecuritySettings(currentUser)
 
   const handleEdit = () => {
     setCurrentRow(user)
@@ -156,6 +164,20 @@ export function DataTableRowActions({ row }: DataTableRowActionsProps) {
               <Pencil size={16} />
             </DropdownMenuShortcut>
           </DropdownMenuItem>
+
+          {canManageUserRpm && (
+            <DropdownMenuItem
+              onSelect={(event) => {
+                event.preventDefault()
+                setRpmLimitDialogOpen(true)
+              }}
+            >
+              {t('Set group RPM limit')}
+              <DropdownMenuShortcut>
+                <HugeiconsIcon icon={DashboardSpeed01Icon} />
+              </DropdownMenuShortcut>
+            </DropdownMenuItem>
+          )}
 
           <DropdownMenuSeparator />
 
@@ -294,6 +316,16 @@ export function DataTableRowActions({ row }: DataTableRowActionsProps) {
         user={{ id: user.id, username: user.username }}
         onSuccess={triggerRefresh}
       />
+
+      {canManageUserRpm && rpmLimitDialogOpen && (
+        <UserRpmLimitDialog
+          key={user.id}
+          open={rpmLimitDialogOpen}
+          onOpenChange={setRpmLimitDialogOpen}
+          user={user}
+          onSuccess={triggerRefresh}
+        />
+      )}
     </>
   )
 }
