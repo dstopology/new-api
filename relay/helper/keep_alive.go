@@ -17,12 +17,13 @@ import (
 )
 
 const (
-	DefaultImageKeepAliveInterval = 25 * time.Second
+	DefaultImageKeepAliveInterval     = 25 * time.Second
+	DefaultNonStreamKeepAliveInterval = 60 * time.Second
 
-	processingKeepAliveContextKey = "http_processing_keepalive"
+	nonStreamKeepAliveContextKey = "http_non_stream_keepalive"
 )
 
-type processingKeepAlive struct {
+type nonStreamKeepAlive struct {
 	cancel context.CancelFunc
 	done   chan struct{}
 	once   sync.Once
@@ -66,29 +67,37 @@ func RelayPingConfig(info *relaycommon.RelayInfo, generalSettings *operation_set
 	return true, interval
 }
 
-func StartProcessingKeepAlive(c *gin.Context, interval time.Duration) func() {
+func StartNonStreamKeepAlive(c *gin.Context, interval time.Duration) func() {
 	if c == nil || c.Writer == nil || c.Request == nil || interval <= 0 {
 		return func() {}
 	}
 
 	ctx, cancel := context.WithCancel(c.Request.Context())
-	keepAlive := &processingKeepAlive{
+	keepAlive := &nonStreamKeepAlive{
 		cancel: cancel,
 		done:   make(chan struct{}),
 	}
-	c.Set(processingKeepAliveContextKey, keepAlive)
+	c.Set(nonStreamKeepAliveContextKey, keepAlive)
 
 	go func() {
 		defer close(keepAlive.done)
 
 		ticker := time.NewTicker(interval)
 		defer ticker.Stop()
+		headersSent := false
 
 		for {
 			select {
 			case <-ticker.C:
-				if err := WriteProcessing(c); err != nil {
-					logger.LogDebug(c, "HTTP 102 keepalive stopped: %s", err.Error())
+				var err error
+				if !headersSent {
+					err = WriteNonStreamHeaders(c)
+					headersSent = err == nil
+				} else {
+					err = WriteJSONWhitespace(c)
+				}
+				if err != nil {
+					logger.LogDebug(c, "non-stream keepalive stopped: %s", err.Error())
 					return
 				}
 			case <-ctx.Done():
@@ -98,19 +107,19 @@ func StartProcessingKeepAlive(c *gin.Context, interval time.Duration) func() {
 	}()
 
 	return func() {
-		StopProcessingKeepAlive(c)
+		StopNonStreamKeepAlive(c)
 	}
 }
 
-func StopProcessingKeepAlive(c *gin.Context) {
+func StopNonStreamKeepAlive(c *gin.Context) {
 	if c == nil {
 		return
 	}
-	value, ok := c.Get(processingKeepAliveContextKey)
+	value, ok := c.Get(nonStreamKeepAliveContextKey)
 	if !ok || value == nil {
 		return
 	}
-	keepAlive, ok := value.(*processingKeepAlive)
+	keepAlive, ok := value.(*nonStreamKeepAlive)
 	if !ok || keepAlive == nil {
 		return
 	}
@@ -119,33 +128,50 @@ func StopProcessingKeepAlive(c *gin.Context) {
 		select {
 		case <-keepAlive.done:
 		case <-time.After(5 * time.Second):
-			logger.LogDebug(c, "timeout waiting for HTTP 102 keepalive to stop")
+			logger.LogDebug(c, "timeout waiting for non-stream keepalive to stop")
 		}
-		c.Set(processingKeepAliveContextKey, nil)
+		c.Set(nonStreamKeepAliveContextKey, nil)
 	})
 }
 
-func WriteProcessing(c *gin.Context) error {
+func validateNonStreamKeepAliveContext(c *gin.Context) error {
 	if c == nil || c.Writer == nil {
 		return errors.New("context or writer is nil")
 	}
 	if c.Request != nil && c.Request.Context().Err() != nil {
 		return fmt.Errorf("request context done: %w", c.Request.Context().Err())
 	}
+	return nil
+}
+
+func WriteNonStreamHeaders(c *gin.Context) error {
+	if err := validateNonStreamKeepAliveContext(c); err != nil {
+		return err
+	}
 	if c.Writer.Written() {
 		return errors.New("response already written")
 	}
 
-	target := http.ResponseWriter(c.Writer)
-	if unwrapper, ok := c.Writer.(interface{ Unwrap() http.ResponseWriter }); ok {
-		target = unwrapper.Unwrap()
+	header := c.Writer.Header()
+	header.Del("Content-Length")
+	header.Set("Content-Type", "application/json")
+	header.Set("Cache-Control", "no-cache, no-transform")
+	header.Set("X-Accel-Buffering", "no")
+	c.Writer.WriteHeader(http.StatusOK)
+	c.Writer.WriteHeaderNow()
+	return FlushWriter(c)
+}
+
+func WriteJSONWhitespace(c *gin.Context) error {
+	if err := validateNonStreamKeepAliveContext(c); err != nil {
+		return err
 	}
-	if target == nil {
-		return errors.New("underlying response writer is nil")
+	if !c.Writer.Written() {
+		return errors.New("response headers not written")
 	}
 
-	// net/http flushes informational responses inside WriteHeader. Calling
-	// Flush here would see no final header and implicitly commit HTTP 200.
-	target.WriteHeader(http.StatusProcessing)
-	return nil
+	if _, err := c.Writer.Write([]byte("\n")); err != nil {
+		return fmt.Errorf("write JSON whitespace keepalive: %w", err)
+	}
+	return FlushWriter(c)
 }

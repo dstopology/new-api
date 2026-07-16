@@ -5,9 +5,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
-	"net/http/httptrace"
-	"net/textproto"
-	"sync"
+	"strings"
 	"testing"
 	"time"
 
@@ -41,86 +39,40 @@ func TestRelayPingConfigRespectsDisablePing(t *testing.T) {
 	require.NotEqual(t, time.Second, interval)
 }
 
-func TestWriteProcessingDoesNotCommitFinalResponse(t *testing.T) {
+func TestNonStreamKeepAlivePreservesJSONResponse(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
-	processingResult := make(chan error, 1)
-	releaseFinal := make(chan struct{})
-	var releaseOnce sync.Once
-	release := func() { releaseOnce.Do(func() { close(releaseFinal) }) }
+	writeResult := make(chan error, 1)
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		c, _ := gin.CreateTestContext(w)
 		c.Request = r
-		processingResult <- WriteProcessing(c)
-		<-releaseFinal
-		c.JSON(http.StatusCreated, gin.H{"ok": true})
-	}))
-	t.Cleanup(func() {
-		release()
-		server.Close()
-	})
-
-	got1xx := make(chan int, 1)
-	trace := &httptrace.ClientTrace{
-		Got1xxResponse: func(code int, _ textproto.MIMEHeader) error {
-			got1xx <- code
-			return nil
-		},
-	}
-	request, err := http.NewRequestWithContext(
-		httptrace.WithClientTrace(context.Background(), trace),
-		http.MethodGet,
-		server.URL,
-		nil,
-	)
-	require.NoError(t, err)
-
-	type responseResult struct {
-		response *http.Response
-		err      error
-	}
-	responseChan := make(chan responseResult, 1)
-	go func() {
-		response, requestErr := server.Client().Do(request)
-		responseChan <- responseResult{response: response, err: requestErr}
-	}()
-
-	select {
-	case processingErr := <-processingResult:
-		require.NoError(t, processingErr)
-	case <-time.After(2 * time.Second):
-		t.Fatal("timed out writing HTTP 102")
-	}
-	select {
-	case code := <-got1xx:
-		require.Equal(t, http.StatusProcessing, code)
-	case <-time.After(2 * time.Second):
-		t.Fatal("client did not receive HTTP 102")
-	}
-	select {
-	case result := <-responseChan:
-		if result.response != nil {
-			_ = result.response.Body.Close()
+		if err := WriteNonStreamHeaders(c); err != nil {
+			writeResult <- err
+			return
 		}
-		t.Fatal("HTTP 102 committed an early final response")
-	case <-time.After(200 * time.Millisecond):
-	}
+		if err := WriteJSONWhitespace(c); err != nil {
+			writeResult <- err
+			return
+		}
+		writeResult <- nil
+		c.JSON(http.StatusOK, gin.H{"ok": true})
+	}))
+	t.Cleanup(server.Close)
 
-	release()
-	var result responseResult
-	select {
-	case result = <-responseChan:
-	case <-time.After(2 * time.Second):
-		t.Fatal("timed out waiting for final response")
-	}
-	require.NoError(t, result.err)
-	require.NotNil(t, result.response)
-	defer result.response.Body.Close()
-
-	body, err := io.ReadAll(result.response.Body)
+	request, err := http.NewRequestWithContext(context.Background(), http.MethodGet, server.URL, nil)
 	require.NoError(t, err)
-	require.Equal(t, http.StatusCreated, result.response.StatusCode)
-	require.Contains(t, result.response.Header.Get("Content-Type"), "application/json")
+	response, err := server.Client().Do(request)
+	require.NoError(t, err)
+	defer response.Body.Close()
+	require.NoError(t, <-writeResult)
+
+	body, err := io.ReadAll(response.Body)
+	require.NoError(t, err)
+	require.Equal(t, http.StatusOK, response.StatusCode)
+	require.Contains(t, response.Header.Get("Content-Type"), "application/json")
+	require.True(t, strings.HasPrefix(string(body), "\n"))
+	require.NotContains(t, string(body), ": PING")
+	require.NotContains(t, string(body), "data:")
 	require.JSONEq(t, `{"ok":true}`, string(body))
 }

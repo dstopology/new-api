@@ -15,7 +15,6 @@ import (
 	"github.com/QuantumNous/new-api/relay/helper"
 	"github.com/QuantumNous/new-api/service"
 	"github.com/QuantumNous/new-api/setting/model_setting"
-	"github.com/QuantumNous/new-api/setting/operation_setting"
 	"github.com/QuantumNous/new-api/types"
 
 	"github.com/gin-gonic/gin"
@@ -51,12 +50,9 @@ func ImageHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *type
 	}
 	adaptor.Init(info)
 
-	if !info.IsStream && info.ApiType == constant.APITypeOpenAI {
-		pingEnabled, interval := helper.RelayPingConfig(info, operation_setting.GetGeneralSetting())
-		if pingEnabled {
-			stopProcessingKeepAlive := helper.StartProcessingKeepAlive(c, interval)
-			defer stopProcessingKeepAlive()
-		}
+	if !info.IsStream && info.ApiType == constant.APITypeOpenAI && !info.DisablePing {
+		stopNonStreamKeepAlive := helper.StartNonStreamKeepAlive(c, helper.DefaultNonStreamKeepAliveInterval)
+		defer stopNonStreamKeepAlive()
 	}
 
 	var requestBody io.Reader
