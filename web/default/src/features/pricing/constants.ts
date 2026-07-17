@@ -47,6 +47,7 @@ export const FILTER_ALL = 'all'
 export const QUOTA_TYPES = {
   ALL: 'all',
   TOKEN: 'token',
+  SECOND: 'second',
   REQUEST: 'request',
 } as const
 
@@ -59,9 +60,17 @@ export function getQuotaTypeLabels(
   return {
     [QUOTA_TYPES.ALL]: t('All Models'),
     [QUOTA_TYPES.TOKEN]: t('Token-based'),
+    [QUOTA_TYPES.SECOND]: t('Per Second'),
     [QUOTA_TYPES.REQUEST]: t('Per Request'),
   }
 }
+
+export const BILLING_MODES = {
+  RATIO: 'ratio',
+  PER_REQUEST: 'per_request',
+  PER_SECOND: 'per_second',
+  TIERED_EXPR: 'tiered_expr',
+} as const
 
 /** Endpoint type options */
 export const ENDPOINT_TYPES = {

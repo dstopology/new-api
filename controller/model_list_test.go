@@ -12,8 +12,10 @@ import (
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/dto"
 	"github.com/QuantumNous/new-api/model"
+	"github.com/QuantumNous/new-api/setting/billing_setting"
 	"github.com/QuantumNous/new-api/setting/config"
 	"github.com/QuantumNous/new-api/setting/operation_setting"
+	"github.com/QuantumNous/new-api/setting/ratio_setting"
 	"github.com/gin-gonic/gin"
 	"github.com/glebarez/sqlite"
 	"github.com/stretchr/testify/require"
@@ -93,7 +95,7 @@ func initModelListColumnNames(t *testing.T) {
 	}
 }
 
-func withTieredBillingConfig(t *testing.T, modes map[string]string, exprs map[string]string) {
+func withBillingConfig(t *testing.T, modes map[string]string, exprs map[string]string) {
 	t.Helper()
 
 	saved := map[string]string{}
@@ -130,6 +132,26 @@ func withSelfUseModeDisabled(t *testing.T) {
 	})
 }
 
+func withModelPrice(t *testing.T, modelName string, price float64) {
+	t.Helper()
+
+	original := ratio_setting.GetModelPriceCopy()
+	next := ratio_setting.GetModelPriceCopy()
+	next[modelName] = price
+
+	nextBytes, err := common.Marshal(next)
+	require.NoError(t, err)
+	require.NoError(t, ratio_setting.UpdateModelPriceByJSONString(string(nextBytes)))
+	model.InvalidatePricingCache()
+
+	t.Cleanup(func() {
+		originalBytes, err := common.Marshal(original)
+		require.NoError(t, err)
+		require.NoError(t, ratio_setting.UpdateModelPriceByJSONString(string(originalBytes)))
+		model.InvalidatePricingCache()
+	})
+}
+
 func decodeListModelsResponse(t *testing.T, recorder *httptest.ResponseRecorder) map[string]struct{} {
 	t.Helper()
 
@@ -156,7 +178,7 @@ func pricingByModelName(pricings []model.Pricing) map[string]model.Pricing {
 
 func TestListModelsIncludesTieredBillingModel(t *testing.T) {
 	withSelfUseModeDisabled(t)
-	withTieredBillingConfig(t, map[string]string{
+	withBillingConfig(t, map[string]string{
 		"zz-tiered-visible-model":      "tiered_expr",
 		"zz-tiered-empty-expr-model":   "tiered_expr",
 		"zz-tiered-missing-expr-model": "tiered_expr",
@@ -210,9 +232,40 @@ func TestListModelsIncludesTieredBillingModel(t *testing.T) {
 	require.Empty(t, missingExprPricing.BillingExpr)
 }
 
+func TestPricingExposesPerSecondFixedPriceMode(t *testing.T) {
+	const modelName = "zz-per-second-video-model"
+
+	billingModes := map[string]string{
+		modelName: billing_setting.BillingModePerSecond,
+	}
+	withBillingConfig(t, billingModes, map[string]string{})
+	withModelPrice(t, modelName, 0.65)
+
+	db := setupModelListControllerTestDB(t)
+	require.NoError(t, db.Create(&model.Channel{
+		Id:     1,
+		Name:   "video-upstream",
+		Type:   constant.ChannelTypeOpenAI,
+		Status: common.ChannelStatusEnabled,
+	}).Error)
+	require.NoError(t, db.Create(&model.Ability{
+		Group:     "default",
+		Model:     modelName,
+		ChannelId: 1,
+		Enabled:   true,
+	}).Error)
+
+	pricing, ok := pricingByModelName(model.GetPricing())[modelName]
+	require.True(t, ok)
+	require.Equal(t, 1, pricing.QuotaType)
+	require.Equal(t, 0.65, pricing.ModelPrice)
+	require.Equal(t, billing_setting.BillingModePerSecond, pricing.BillingMode)
+	require.Empty(t, pricing.BillingExpr)
+}
+
 func TestListModelsTokenLimitIncludesTieredBillingModel(t *testing.T) {
 	withSelfUseModeDisabled(t)
-	withTieredBillingConfig(t, map[string]string{
+	withBillingConfig(t, map[string]string{
 		"zz-token-tiered-visible-model":      "tiered_expr",
 		"zz-token-tiered-empty-expr-model":   "tiered_expr",
 		"zz-token-tiered-missing-expr-model": "tiered_expr",
@@ -224,6 +277,7 @@ func TestListModelsTokenLimitIncludesTieredBillingModel(t *testing.T) {
 	recorder := httptest.NewRecorder()
 	ctx, _ := gin.CreateTestContext(recorder)
 	ctx.Request = httptest.NewRequest(http.MethodGet, "/v1/models", nil)
+	common.SetContextKey(ctx, constant.ContextKeyUserGroup, "default")
 	common.SetContextKey(ctx, constant.ContextKeyTokenModelLimitEnabled, true)
 	common.SetContextKey(ctx, constant.ContextKeyTokenModelLimit, map[string]bool{
 		"zz-token-tiered-visible-model":      true,

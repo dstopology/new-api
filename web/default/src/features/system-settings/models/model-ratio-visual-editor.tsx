@@ -124,12 +124,14 @@ const filterBySelectedValues = (
 
 const getModeLabel = (mode?: string) => {
   if (mode === 'per-request') return 'Per-request'
+  if (mode === 'per-second') return 'Per-second'
   if (mode === 'tiered_expr') return 'Expression'
   return 'Per-token'
 }
 
 const getModeVariant = (mode?: string): 'warning' | 'info' | 'success' => {
   if (mode === 'per-request') return 'warning'
+  if (mode === 'per-second') return 'info'
   if (mode === 'tiered_expr') return 'info'
   return 'success'
 }
@@ -148,6 +150,9 @@ const getPriceSummary = (row: ModelRow, t: (key: string) => string) => {
   }
   if (row.billingMode === 'per-request') {
     return row.price ? `$${row.price} / ${t('request')}` : t('Unset price')
+  }
+  if (row.billingMode === 'per-second') {
+    return row.price ? `$${row.price} / ${t('second')}` : t('Unset price')
   }
 
   const inputPrice = ratioToPrice(row.ratio)
@@ -175,6 +180,9 @@ const getPriceDetail = (row: ModelRow, t: (key: string) => string) => {
   }
   if (row.billingMode === 'per-request') {
     return t('Fixed request price')
+  }
+  if (row.billingMode === 'per-second') {
+    return t('Per second')
   }
 
   const inputPrice = ratioToPrice(row.ratio)
@@ -354,6 +362,13 @@ export const ModelRatioVisualEditor = memo(
           }
         }
 
+        let fixedPriceMode: ModelRow['billingMode'] = 'per-request'
+        if (modeForModel === 'per_second') {
+          fixedPriceMode = 'per-second'
+        }
+        const hasExplicitFixedPriceMode =
+          modeForModel === 'per_request' || modeForModel === 'per_second'
+
         return {
           name,
           price,
@@ -364,7 +379,10 @@ export const ModelRatioVisualEditor = memo(
           imageRatio: image,
           audioRatio: audio,
           audioCompletionRatio: audioCompletion,
-          billingMode: price !== '' ? 'per-request' : 'per-token',
+          billingMode:
+            hasExplicitFixedPriceMode || price !== ''
+              ? fixedPriceMode
+              : 'per-token',
           hasConflict:
             price !== '' &&
             (ratio !== '' ||
@@ -397,6 +415,7 @@ export const ModelRatioVisualEditor = memo(
           (acc, model) => {
             const mode =
               model.billingMode === 'per-request' ||
+              model.billingMode === 'per-second' ||
               model.billingMode === 'tiered_expr'
                 ? model.billingMode
                 : 'per-token'
@@ -406,14 +425,27 @@ export const ModelRatioVisualEditor = memo(
           {
             'per-token': 0,
             'per-request': 0,
+            'per-second': 0,
             tiered_expr: 0,
-          } as Record<'per-token' | 'per-request' | 'tiered_expr', number>
+          } as Record<
+            'per-token' | 'per-request' | 'per-second' | 'tiered_expr',
+            number
+          >
         ),
       [models]
     )
 
     const handleEdit = useCallback(
       (model: ModelRow) => {
+        let nextBillingMode: ModelRatioData['billingMode'] = 'per-token'
+        if (model.billingMode === 'tiered_expr') {
+          nextBillingMode = 'tiered_expr'
+        } else if (model.billingMode === 'per-second') {
+          nextBillingMode = 'per-second'
+        } else if (model.price && model.price !== '') {
+          nextBillingMode = 'per-request'
+        }
+
         setEditData({
           name: model.name,
           price: model.price,
@@ -424,12 +456,7 @@ export const ModelRatioVisualEditor = memo(
           imageRatio: model.imageRatio,
           audioRatio: model.audioRatio,
           audioCompletionRatio: model.audioCompletionRatio,
-          billingMode:
-            model.billingMode === 'tiered_expr'
-              ? 'tiered_expr'
-              : model.price && model.price !== ''
-                ? 'per-request'
-                : 'per-token',
+          billingMode: nextBillingMode,
           billingExpr: model.billingExpr,
           requestRuleExpr: model.requestRuleExpr,
         })
@@ -788,7 +815,11 @@ export const ModelRatioVisualEditor = memo(
             setIfPresent(imageMap, name, data.imageRatio)
             setIfPresent(audioMap, name, data.audioRatio)
             setIfPresent(audioCompletionMap, name, data.audioCompletionRatio)
-          } else if (data.price && data.price !== '') {
+          } else if (data.billingMode === 'per-second') {
+            billingModeMap[name] = 'per_second'
+            setIfPresent(priceMap, name, data.price)
+          } else if (data.billingMode === 'per-request') {
+            billingModeMap[name] = 'per_request'
             setIfPresent(priceMap, name, data.price)
           } else {
             setIfPresent(ratioMap, name, data.ratio)
@@ -890,17 +921,22 @@ export const ModelRatioVisualEditor = memo(
                   title: t('Mode'),
                   options: [
                     {
-                      label: 'Per-token',
+                      label: t('Per-token'),
                       value: 'per-token',
                       count: modeCounts['per-token'],
                     },
                     {
-                      label: 'Per-request',
+                      label: t('Per-request'),
                       value: 'per-request',
                       count: modeCounts['per-request'],
                     },
                     {
-                      label: 'Expression',
+                      label: t('Per-second'),
+                      value: 'per-second',
+                      count: modeCounts['per-second'],
+                    },
+                    {
+                      label: t('Expression'),
                       value: 'tiered_expr',
                       count: modeCounts.tiered_expr,
                     },

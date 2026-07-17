@@ -131,6 +131,16 @@ func normalizeSyncValue(field string, value any) any {
 	return value
 }
 
+func getSyncablePricingBillingMode(quotaType int, mode string, expr string) (string, string, bool) {
+	if mode == billing_setting.BillingModeTieredExpr && strings.TrimSpace(expr) != "" {
+		return billing_setting.BillingModeTieredExpr, expr, true
+	}
+	if quotaType == 1 && billing_setting.IsFixedPriceMode(mode) {
+		return mode, "", true
+	}
+	return "", "", false
+}
+
 func getLocalPricingSyncData() map[string]any {
 	data := billing_setting.GetPricingSyncData(map[string]any(ratio_setting.GetExposedData()))
 	data["image_ratio"] = ratio_setting.GetImageRatioCopy()
@@ -413,9 +423,11 @@ func FetchUpstreamRatios(c *gin.Context) {
 				if item.ModelName == "" {
 					continue
 				}
-				if item.BillingMode == billing_setting.BillingModeTieredExpr && strings.TrimSpace(item.BillingExpr) != "" {
-					billingModeMap[item.ModelName] = billing_setting.BillingModeTieredExpr
-					billingExprMap[item.ModelName] = item.BillingExpr
+				if mode, expr, ok := getSyncablePricingBillingMode(item.QuotaType, item.BillingMode, item.BillingExpr); ok {
+					billingModeMap[item.ModelName] = mode
+					if expr != "" {
+						billingExprMap[item.ModelName] = expr
+					}
 				}
 				if item.QuotaType == 1 {
 					modelPriceMap[item.ModelName] = item.ModelPrice

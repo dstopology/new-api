@@ -27,6 +27,8 @@ export type PricingVendor = {
   description?: string
 }
 
+export type BillingMode = 'ratio' | 'per_request' | 'per_second' | 'tiered_expr'
+
 export type PricingModel = {
   id: number
   model_name: string
@@ -51,7 +53,7 @@ export type PricingModel = {
   key?: string
   group_ratio?: Record<string, number>
   /** Billing mode (e.g. "tiered_expr") used to flag dynamic pricing */
-  billing_mode?: string
+  billing_mode?: BillingMode
   /** Raw expression describing dynamic / tiered billing */
   billing_expr?: string
   /** Pricing version returned by backend, useful for cache busting */

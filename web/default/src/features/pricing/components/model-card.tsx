@@ -29,7 +29,7 @@ import {
   getDynamicPricingSummary,
 } from '../lib/dynamic-price'
 import { parseTags } from '../lib/filters'
-import { isTokenBasedModel } from '../lib/model-helpers'
+import { isPerSecondModel, isTokenBasedModel } from '../lib/model-helpers'
 import { formatPrice, formatRequestPrice } from '../lib/price'
 import type { PricingModel, TokenUnit } from '../types'
 import { ModelPerfBadge, type ModelPerfBadgeData } from './model-perf-badge'
@@ -53,6 +53,16 @@ export const ModelCard = memo(function ModelCard(props: ModelCardProps) {
   const usdExchangeRate = props.usdExchangeRate ?? 1
   const showRechargePrice = props.showRechargePrice ?? false
   const isTokenBased = isTokenBasedModel(props.model)
+  const isPerSecond = isPerSecondModel(props.model)
+  const fixedPriceUnit = isPerSecond ? t('second') : t('request')
+  let billingTypeLabel = t('Per Request')
+  let footerUnitLabel = fixedPriceUnit
+  if (isTokenBased) {
+    billingTypeLabel = t('Token-based')
+    footerUnitLabel = tokenUnit === 'K' ? '1K' : '1M'
+  } else if (isPerSecond) {
+    billingTypeLabel = t('Per Second')
+  }
   const tokenUnitLabel = tokenUnit === 'K' ? '1K' : '1M'
   const tags = parseTags(props.model.tags)
   const groups = props.model.enable_groups || []
@@ -204,7 +214,7 @@ export const ModelCard = memo(function ModelCard(props: ModelCardProps) {
                       props.selectedGroup
                     )}
                   </span>{' '}
-                  / {t('request')}
+                  / {fixedPriceUnit}
                 </span>
               )}
             </div>
@@ -245,7 +255,7 @@ export const ModelCard = memo(function ModelCard(props: ModelCardProps) {
             </span>
           )}
           <span className='text-muted-foreground text-xs font-medium'>
-            {isTokenBased ? t('Token-based') : t('Per Request')}
+            {billingTypeLabel}
           </span>
           {isDynamicPricing && (
             <StatusBadge
@@ -265,7 +275,7 @@ export const ModelCard = memo(function ModelCard(props: ModelCardProps) {
             </span>
           ))}
           <span className='text-muted-foreground/50 text-xs'>
-            {tokenUnitLabel}
+            {footerUnitLabel}
           </span>
           {hiddenCount > 0 && (
             <span className='text-muted-foreground/40 text-xs'>

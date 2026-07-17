@@ -36,6 +36,7 @@ import {
   getQuotaTypeLabels,
 } from '../constants'
 import { parseTags } from '../lib/filters'
+import { isPerSecondModel } from '../lib/model-helpers'
 import type { PricingModel, PricingVendor } from '../types'
 
 type FilterOption = {
@@ -202,9 +203,17 @@ export function PricingSidebar(props: PricingSidebarProps) {
       count: countBy(props.models, (model) => model.quota_type === 0),
     },
     {
+      value: QUOTA_TYPES.SECOND,
+      label: quotaTypeLabels[QUOTA_TYPES.SECOND],
+      count: countBy(props.models, isPerSecondModel),
+    },
+    {
       value: QUOTA_TYPES.REQUEST,
       label: quotaTypeLabels[QUOTA_TYPES.REQUEST],
-      count: countBy(props.models, (model) => model.quota_type === 1),
+      count: countBy(
+        props.models,
+        (model) => model.quota_type === 1 && !isPerSecondModel(model)
+      ),
     },
   ]
 

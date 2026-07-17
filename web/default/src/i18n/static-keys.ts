@@ -48,6 +48,7 @@ export const STATIC_I18N_KEYS = [
   'All Models',
   'Token-based',
   'Per Request',
+  'Per-second',
   'All Types',
   'Chat',
   'Response',

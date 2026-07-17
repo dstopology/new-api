@@ -95,6 +95,10 @@ function getBillingCategory(ratioType: string): 'price' | 'ratio' | 'tiered' {
   return 'ratio'
 }
 
+function isFixedBillingMode(value: unknown): boolean {
+  return value === 'per_request' || value === 'per_second'
+}
+
 function optionKeyBySyncField(ratioType: string): string {
   const explicit: Record<string, string> = {
     billing_mode: 'billing_setting.billing_mode',
@@ -122,9 +126,21 @@ function deleteResolutionField(
 ): ResolutionsMap {
   if (!res[model]) return res
   const newModelRes = { ...res[model] }
+  const removedValue = newModelRes[ratioType]
   delete newModelRes[ratioType]
   if (ratioType === 'billing_expr') delete newModelRes['billing_mode']
-  if (ratioType === 'billing_mode') delete newModelRes['billing_expr']
+  if (ratioType === 'billing_mode') {
+    delete newModelRes['billing_expr']
+    if (isFixedBillingMode(removedValue)) {
+      delete newModelRes['model_price']
+    }
+  }
+  if (
+    ratioType === 'model_price' &&
+    isFixedBillingMode(newModelRes['billing_mode'])
+  ) {
+    delete newModelRes['billing_mode']
+  }
   const next = { ...res }
   if (Object.keys(newModelRes).length === 0) {
     delete next[model]
@@ -305,8 +321,38 @@ export function UpstreamRatioSync({ modelRatios }: UpstreamRatioSyncProps) {
 
         newModelRes[finalType] = finalValue
 
+        if (finalType === 'model_price' && sourceName && modelDiffs) {
+          const modeVal = modelDiffs.billing_mode?.upstreams?.[sourceName]
+          if (isFixedBillingMode(modeVal)) {
+            newModelRes.billing_mode = modeVal as string
+            delete newModelRes.billing_expr
+          }
+        }
+
+        if (
+          finalType === 'billing_mode' &&
+          isFixedBillingMode(finalValue) &&
+          sourceName &&
+          modelDiffs
+        ) {
+          const priceVal = modelDiffs.model_price?.upstreams?.[sourceName]
+          if (
+            priceVal !== undefined &&
+            priceVal !== null &&
+            priceVal !== 'same'
+          ) {
+            newModelRes.model_price = priceVal
+          }
+          delete newModelRes.billing_expr
+        }
+
         // When selecting a tiered field, auto-populate paired fields from the same source
-        if (category === 'tiered' && sourceName && modelDiffs) {
+        if (
+          category === 'tiered' &&
+          !isFixedBillingMode(finalValue) &&
+          sourceName &&
+          modelDiffs
+        ) {
           const modeVal = modelDiffs.billing_mode?.upstreams?.[sourceName]
           const exprVal = modelDiffs.billing_expr?.upstreams?.[sourceName]
           if (modeVal !== undefined && modeVal !== null && modeVal !== 'same') {
@@ -398,8 +444,10 @@ export function UpstreamRatioSync({ modelRatios }: UpstreamRatioSyncProps) {
         const hasRatio = selectedTypes.some((rt) =>
           RATIO_SYNC_FIELDS.includes(rt as RatioType)
         )
+        const selectedBillingMode = ratios.billing_mode
+        const hasFixedBillingMode = isFixedBillingMode(selectedBillingMode)
 
-        if (hasPrice) {
+        if (hasPrice || hasFixedBillingMode) {
           delete finalRatios.ModelRatio[model]
           delete finalRatios.CompletionRatio[model]
           delete finalRatios.CacheRatio[model]
@@ -407,9 +455,14 @@ export function UpstreamRatioSync({ modelRatios }: UpstreamRatioSyncProps) {
           delete finalRatios.ImageRatio[model]
           delete finalRatios.AudioRatio[model]
           delete finalRatios.AudioCompletionRatio[model]
+          if (hasFixedBillingMode) {
+            delete finalRatios['billing_setting.billing_expr'][model]
+          }
         }
         if (hasRatio) {
           delete finalRatios.ModelPrice[model]
+          delete finalRatios['billing_setting.billing_mode'][model]
+          delete finalRatios['billing_setting.billing_expr'][model]
         }
 
         Object.entries(ratios).forEach(([ratioType, value]) => {

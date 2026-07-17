@@ -34,7 +34,7 @@ import {
   getDynamicPricingSummary,
 } from '../lib/dynamic-price'
 import { parseTags } from '../lib/filters'
-import { isTokenBasedModel } from '../lib/model-helpers'
+import { isPerSecondModel, isTokenBasedModel } from '../lib/model-helpers'
 import {
   formatPrice,
   formatRequestPrice,
@@ -130,13 +130,17 @@ export function usePricingColumns(
       header: t('Type'),
       cell: ({ row }) => {
         const isTokenBased = row.original.quota_type === QUOTA_TYPE_VALUES.TOKEN
-        return (
-          <StatusBadge
-            label={isTokenBased ? t('Token') : t('Request')}
-            variant={isTokenBased ? 'info' : 'neutral'}
-            copyable={false}
-          />
-        )
+        const isPerSecond = isPerSecondModel(row.original)
+        let label = t('Request')
+        let variant: 'info' | 'warning' | 'neutral' = 'neutral'
+        if (isTokenBased) {
+          label = t('Token')
+          variant = 'info'
+        } else if (isPerSecond) {
+          label = t('Per Second')
+          variant = 'warning'
+        }
+        return <StatusBadge label={label} variant={variant} copyable={false} />
       },
       size: 80,
       enableSorting: false,
@@ -260,12 +264,15 @@ export function usePricingColumns(
             selectedGroup
           )
         )
+        const fixedPriceUnit = isPerSecondModel(model)
+          ? t('second')
+          : t('request')
 
         return (
           <div className='min-w-[100px]'>
             <span className='font-mono text-sm tabular-nums'>{price}</span>
             <div className='text-muted-foreground/50 text-[10px]'>
-              / {t('request')}
+              / {fixedPriceUnit}
             </div>
           </div>
         )

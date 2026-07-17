@@ -10,10 +10,16 @@ import (
 
 const (
 	BillingModeRatio      = "ratio"
+	BillingModePerRequest = "per_request"
+	BillingModePerSecond  = "per_second"
 	BillingModeTieredExpr = "tiered_expr"
 	BillingModeField      = "billing_mode"
 	BillingExprField      = "billing_expr"
 )
+
+func IsFixedPriceMode(mode string) bool {
+	return mode == BillingModePerRequest || mode == BillingModePerSecond
+}
 
 // BillingSetting is managed by config.GlobalConfig.Register.
 // DB keys: billing_setting.billing_mode, billing_setting.billing_expr
