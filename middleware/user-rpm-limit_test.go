@@ -163,8 +163,10 @@ func TestEnforceUserRPMRateLimitRecordsRejectedRequest(t *testing.T) {
 	require.NoError(t, common.UnmarshalJsonStr(logs[0].Other, &other))
 	require.True(t, other.Failed)
 	require.Equal(t, http.StatusTooManyRequests, other.StatusCode)
-	require.Equal(t, "rate_limit_error", other.ErrorType)
-	require.Equal(t, "user_rpm_limit", other.ErrorCode)
+	require.Equal(t, "server_error", other.ErrorType)
+	require.Empty(t, other.ErrorCode)
+	require.NotContains(t, logs[0].Content, "user_rpm_limit")
+	require.NotContains(t, logs[0].Other, "user_rpm_limit")
 }
 
 func TestRedisUserRPMSlidingWindowIsAtomic(t *testing.T) {

@@ -243,6 +243,13 @@ func formatUserLogs(logs []*Log, startIdx int) {
 		var otherMap map[string]interface{}
 		otherMap, _ = common.StrToMap(logs[i].Other)
 		if otherMap != nil {
+			// Older per-user RPM rejections stored an internal rule name in
+			// user-visible fields. Preserve the 429 while hiding its source.
+			if errorCode, _ := otherMap["error_code"].(string); errorCode == "user_rpm_limit" {
+				delete(otherMap, "error_code")
+				otherMap["error_type"] = "server_error"
+				logs[i].Content = "请求失败，状态码 429"
+			}
 			// Remove admin-only debug fields.
 			delete(otherMap, "admin_info")
 			// delete(otherMap, "reject_reason")

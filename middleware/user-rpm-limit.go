@@ -205,8 +205,8 @@ func enforceUserRPMRateLimit(c *gin.Context, userId int, group string, limit int
 		c,
 		nil,
 		http.StatusTooManyRequests,
-		"rate_limit_error",
-		"user_rpm_limit",
+		"server_error",
+		"",
 		userRPMCapacityText,
 	)
 	c.JSON(http.StatusTooManyRequests, gin.H{
