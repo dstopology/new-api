@@ -11,10 +11,13 @@ import (
 	"time"
 
 	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/model"
 
 	"github.com/gin-gonic/gin"
+	"github.com/glebarez/sqlite"
 	"github.com/go-redis/redis/v8"
 	"github.com/stretchr/testify/require"
+	"gorm.io/gorm"
 )
 
 func TestUserRPMLocalWindowEnforcesSlidingWindow(t *testing.T) {
@@ -97,6 +100,71 @@ func TestEnforceUserRPMRateLimitReturnsPlain429(t *testing.T) {
 	require.NotContains(t, recorder.Body.String(), "RPM")
 	require.Empty(t, recorder.Header().Get("Retry-After"))
 	require.Empty(t, recorder.Header().Get("X-RateLimit-Limit-Requests"))
+}
+
+func TestEnforceUserRPMRateLimitRecordsRejectedRequest(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	require.NoError(t, err)
+	require.NoError(t, db.AutoMigrate(&model.User{}, &model.Log{}))
+
+	previousDB := model.DB
+	previousLogDB := model.LOG_DB
+	previousLogConsumeEnabled := common.LogConsumeEnabled
+	previousRedisEnabled := common.RedisEnabled
+	model.DB = db
+	model.LOG_DB = db
+	common.LogConsumeEnabled = true
+	common.RedisEnabled = false
+	t.Cleanup(func() {
+		model.DB = previousDB
+		model.LOG_DB = previousLogDB
+		common.LogConsumeEnabled = previousLogConsumeEnabled
+		common.RedisEnabled = previousRedisEnabled
+	})
+
+	const userId = 998_003
+	require.NoError(t, db.Create(&model.User{Id: userId, Username: "rpm-limited-user"}).Error)
+
+	router := gin.New()
+	router.POST("/v1/chat/completions", func(c *gin.Context) {
+		c.Set("id", userId)
+		c.Set("username", "rpm-limited-user")
+		c.Set("token_id", 321)
+		c.Set("token_name", "rpm-test-token")
+		c.Set("group", "default")
+		if enforceUserRPMRateLimit(c, userId, "default", 1) {
+			c.Status(http.StatusNoContent)
+		}
+	})
+
+	firstRecorder := httptest.NewRecorder()
+	router.ServeHTTP(firstRecorder, httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil))
+	require.Equal(t, http.StatusNoContent, firstRecorder.Code)
+
+	blockedRecorder := httptest.NewRecorder()
+	router.ServeHTTP(blockedRecorder, httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil))
+	require.Equal(t, http.StatusTooManyRequests, blockedRecorder.Code)
+
+	var logs []model.Log
+	require.NoError(t, db.Find(&logs).Error)
+	require.Len(t, logs, 1)
+	require.Equal(t, model.LogTypeConsume, logs[0].Type)
+	require.Equal(t, userId, logs[0].UserId)
+	require.Equal(t, 321, logs[0].TokenId)
+	require.Equal(t, "default", logs[0].Group)
+	require.Zero(t, logs[0].Quota)
+
+	var other struct {
+		Failed     bool   `json:"failed"`
+		StatusCode int    `json:"status_code"`
+		ErrorType  string `json:"error_type"`
+		ErrorCode  string `json:"error_code"`
+	}
+	require.NoError(t, common.UnmarshalJsonStr(logs[0].Other, &other))
+	require.True(t, other.Failed)
+	require.Equal(t, http.StatusTooManyRequests, other.StatusCode)
+	require.Equal(t, "rate_limit_error", other.ErrorType)
+	require.Equal(t, "user_rpm_limit", other.ErrorCode)
 }
 
 func TestRedisUserRPMSlidingWindowIsAtomic(t *testing.T) {

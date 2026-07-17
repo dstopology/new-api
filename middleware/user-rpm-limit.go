@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/service"
 
 	"github.com/gin-gonic/gin"
 	"github.com/go-redis/redis/v8"
@@ -200,6 +201,14 @@ func enforceUserRPMRateLimit(c *gin.Context, userId int, group string, limit int
 		return true
 	}
 
+	service.RecordFailedRelayConsumeLogWithMessage(
+		c,
+		nil,
+		http.StatusTooManyRequests,
+		"rate_limit_error",
+		"user_rpm_limit",
+		userRPMCapacityText,
+	)
 	c.JSON(http.StatusTooManyRequests, gin.H{
 		"error": gin.H{
 			"message": userRPMCapacityText,
