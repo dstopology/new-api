@@ -3,6 +3,7 @@
 .zed
 .history
 upload
+async-media/
 *.exe
 *.db
 build

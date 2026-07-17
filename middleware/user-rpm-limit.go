@@ -20,6 +20,7 @@ const (
 	userRPMWindow       = time.Minute
 	userRPMRedisKeyMark = "rateLimit:URPM:user:"
 	userRPMCapacityText = "Selected model is at capacity. Please try a different model."
+	skipUserRPMKey      = "skip_user_rpm_limit"
 )
 
 var userRPMSlidingWindowScript = redis.NewScript(`
@@ -181,6 +182,9 @@ func checkRedisUserRPM(ctx context.Context, userId int, group string, limit int)
 }
 
 func enforceUserRPMRateLimit(c *gin.Context, userId int, group string, limit int) bool {
+	if c.GetBool(skipUserRPMKey) {
+		return true
+	}
 	if group == "" || limit <= 0 {
 		return true
 	}
@@ -219,4 +223,13 @@ func enforceUserRPMRateLimit(c *gin.Context, userId int, group string, limit int
 	})
 	c.Abort()
 	return false
+}
+
+// SkipUserRPMRateLimit exempts non-generation relay endpoints such as task
+// status polling and temporary result delivery from the user's model RPM.
+func SkipUserRPMRateLimit() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		c.Set(skipUserRPMKey, true)
+		c.Next()
+	}
 }

@@ -102,6 +102,16 @@ func TestEnforceUserRPMRateLimitReturnsPlain429(t *testing.T) {
 	require.Empty(t, recorder.Header().Get("X-RateLimit-Limit-Requests"))
 }
 
+func TestEnforceUserRPMRateLimitCanSkipNonGenerationRequest(t *testing.T) {
+	recorder := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(recorder)
+	c.Request = httptest.NewRequest(http.MethodGet, "/v1/images/generations/task_test", nil)
+	c.Set(skipUserRPMKey, true)
+
+	require.True(t, enforceUserRPMRateLimit(c, 88, "default", 1))
+	require.Equal(t, http.StatusOK, recorder.Code)
+}
+
 func TestEnforceUserRPMRateLimitRecordsRejectedRequest(t *testing.T) {
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
 	require.NoError(t, err)

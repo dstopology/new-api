@@ -27,6 +27,7 @@ type ImageRequest struct {
 	OutputCompression json.RawMessage `json:"output_compression,omitempty"`
 	PartialImages     json.RawMessage `json:"partial_images,omitempty"`
 	Stream            *bool           `json:"stream,omitempty"`
+	Async             *bool           `json:"async,omitempty"`
 	Images            json.RawMessage `json:"images,omitempty"`
 	Mask              json.RawMessage `json:"mask,omitempty"`
 	InputFidelity     json.RawMessage `json:"input_fidelity,omitempty"`
@@ -181,4 +182,5 @@ type ImageData struct {
 	Url           string `json:"url"`
 	B64Json       string `json:"b64_json"`
 	RevisedPrompt string `json:"revised_prompt"`
+	ExpiresAt     int64  `json:"expires_at,omitempty"`
 }

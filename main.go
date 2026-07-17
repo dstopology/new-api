@@ -124,6 +124,9 @@ func main() {
 	service.StartSubscriptionQuotaResetTask()
 
 	conversationarchive.StartDumpTask()
+	if common.IsMasterNode {
+		service.StartTemporaryMediaCleanup()
+	}
 
 	// 失败请求原始记录的过期清理（受 failure_record_setting.retention_days 控制）
 	service.StartRequestFailureLogCleanup()

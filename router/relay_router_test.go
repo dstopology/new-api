@@ -20,4 +20,8 @@ func TestRelayRouterRegistersOpenAIEnginesRoutes(t *testing.T) {
 
 	require.True(t, routes["GET /v1/engines"])
 	require.True(t, routes["GET /v1/engines/:model"])
+	require.True(t, routes["GET /v1/images/generations/:task_id"])
+	require.True(t, routes["GET /v1/images/generations/:task_id/content/:media_id"])
+	require.True(t, routes["GET /v1/images/edits/:task_id"])
+	require.True(t, routes["GET /v1/images/edits/:task_id/content/:media_id"])
 }

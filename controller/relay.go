@@ -633,6 +633,11 @@ func shouldRetryTaskRelay(c *gin.Context, channelId int, taskErr *dto.TaskError,
 	if taskErr == nil {
 		return false
 	}
+	// Async image submissions may already have been accepted when a network
+	// error hides the response. Retrying can create and bill a duplicate task.
+	if c.GetString("platform") == string(constant.TaskPlatformAsyncImage) {
+		return false
+	}
 	if service.ShouldSkipRetryAfterChannelAffinityFailure(c) {
 		return false
 	}

@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/QuantumNous/new-api/common"
@@ -87,13 +88,48 @@ func sweepTimedOutTasks(ctx context.Context) {
 	}
 }
 
-// TaskPollingLoop 主轮询循环，每 15 秒检查一次未完成的任务
+func sweepTimedOutAsyncImageTasks(ctx context.Context) {
+	timeoutMinutes := common.GetEnvOrDefault("ASYNC_IMAGE_TASK_TIMEOUT_MINUTES", 15)
+	if timeoutMinutes <= 0 {
+		return
+	}
+	cutoff := time.Now().Unix() - int64(timeoutMinutes)*60
+	tasks := model.GetTimedOutUnfinishedTasksByPlatform(constant.TaskPlatformAsyncImage, cutoff, 100)
+	if len(tasks) == 0 {
+		return
+	}
+	reason := fmt.Sprintf("异步图片任务超时（%d分钟）", timeoutMinutes)
+	now := time.Now().Unix()
+	for _, task := range tasks {
+		oldStatus := task.Status
+		task.Status = model.TaskStatusFailure
+		task.Progress = "100%"
+		task.FinishTime = now
+		task.FailReason = reason
+		won, err := task.UpdateWithStatus(oldStatus)
+		if err != nil {
+			logger.LogError(ctx, fmt.Sprintf("async image timeout CAS update error for task %s: %v", task.TaskID, err))
+			continue
+		}
+		if won && task.Quota != 0 {
+			RefundTaskQuota(ctx, task, reason)
+		}
+	}
+}
+
+// TaskPollingLoop 主轮询循环，默认每 15 秒检查一次未完成的任务。
 func TaskPollingLoop() {
+	go asyncImageTaskPollingLoop()
+	intervalSeconds := common.GetEnvOrDefault("TASK_POLLING_INTERVAL_SECONDS", 15)
+	if intervalSeconds <= 0 {
+		intervalSeconds = 15
+	}
 	for {
-		time.Sleep(time.Duration(15) * time.Second)
+		time.Sleep(time.Duration(intervalSeconds) * time.Second)
 		common.SysLog("任务进度轮询开始")
 		ctx := context.TODO()
 		sweepTimedOutTasks(ctx)
+		sweepTimedOutAsyncImageTasks(ctx)
 		allTasks := model.GetAllUnFinishSyncTasks(constant.TaskQueryLimit)
 		platformTask := make(map[constant.TaskPlatform][]*model.Task)
 		for _, t := range allTasks {
@@ -134,6 +170,87 @@ func TaskPollingLoop() {
 			DispatchPlatformUpdate(platform, taskChannelM, taskM)
 		}
 		common.SysLog("任务进度轮询完成")
+	}
+}
+
+func asyncImageTaskPollingLoop() {
+	intervalSeconds := common.GetEnvOrDefault("ASYNC_IMAGE_POLL_INTERVAL_SECONDS", 5)
+	if intervalSeconds <= 0 {
+		intervalSeconds = 5
+	}
+	workerCount := common.GetEnvOrDefault("ASYNC_IMAGE_POLL_WORKERS", 8)
+	if workerCount <= 0 {
+		workerCount = 8
+	}
+
+	for {
+		time.Sleep(time.Duration(intervalSeconds) * time.Second)
+		tasks := model.GetAllUnfinishedTasksByPlatform(constant.TaskPlatformAsyncImage, constant.TaskQueryLimit)
+		if len(tasks) == 0 {
+			continue
+		}
+		updateAsyncImageTasks(context.Background(), tasks, workerCount)
+	}
+}
+
+func updateAsyncImageTasks(ctx context.Context, tasks []*model.Task, workerCount int) {
+	sem := make(chan struct{}, workerCount)
+	var wg sync.WaitGroup
+	for _, task := range tasks {
+		if task == nil {
+			continue
+		}
+		if task.GetUpstreamTaskID() == "" {
+			failAsyncImageTaskWithoutUpstreamID(ctx, task)
+			continue
+		}
+		wg.Add(1)
+		sem <- struct{}{}
+		go func(task *model.Task) {
+			defer wg.Done()
+			defer func() { <-sem }()
+
+			channel, err := model.CacheGetChannel(task.ChannelId)
+			if err != nil {
+				logger.LogError(ctx, fmt.Sprintf("async image task %s channel %d: %v", task.TaskID, task.ChannelId, err))
+				return
+			}
+			if GetTaskAdaptorFunc == nil {
+				logger.LogError(ctx, "async image task adaptor factory is not configured")
+				return
+			}
+			adaptor := GetTaskAdaptorFunc(constant.TaskPlatformAsyncImage)
+			if adaptor == nil {
+				logger.LogError(ctx, "async image task adaptor is not configured")
+				return
+			}
+			info := &relaycommon.RelayInfo{ChannelMeta: &relaycommon.ChannelMeta{
+				ChannelBaseUrl: channel.GetBaseURL(),
+				ApiKey:         task.PrivateData.Key,
+			}}
+			adaptor.Init(info)
+			upstreamID := task.GetUpstreamTaskID()
+			if err := updateVideoSingleTask(ctx, adaptor, channel, upstreamID, map[string]*model.Task{upstreamID: task}); err != nil {
+				logger.LogError(ctx, fmt.Sprintf("update async image task %s: %v", task.TaskID, err))
+			}
+		}(task)
+	}
+	wg.Wait()
+}
+
+func failAsyncImageTaskWithoutUpstreamID(ctx context.Context, task *model.Task) {
+	oldStatus := task.Status
+	task.Status = model.TaskStatusFailure
+	task.Progress = "100%"
+	task.FinishTime = time.Now().Unix()
+	task.FailReason = "upstream task id is missing"
+	won, err := task.UpdateWithStatus(oldStatus)
+	if err != nil {
+		logger.LogError(ctx, fmt.Sprintf("fail async image task %s: %v", task.TaskID, err))
+		return
+	}
+	if won && task.Quota != 0 {
+		RefundTaskQuota(ctx, task, task.FailReason)
 	}
 }
 
@@ -392,7 +509,17 @@ func updateVideoSingleTask(ctx context.Context, adaptor TaskPollingAdaptor, ch *
 		return fmt.Errorf("parseTaskResult failed for task %s: %w", taskId, err)
 	}
 
-	task.Data = redactVideoResponseBody(responseBody)
+	if taskResult.Status == string(model.TaskStatusSuccess) && task.Platform == constant.TaskPlatformAsyncImage {
+		if err := PersistAsyncImageTaskResult(ctx, ch, task, taskResult); err != nil {
+			return fmt.Errorf("persist async image result for task %s: %w", task.TaskID, err)
+		}
+	}
+
+	if len(taskResult.ResponseData) > 0 {
+		task.Data = taskResult.ResponseData
+	} else {
+		task.Data = redactVideoResponseBody(responseBody)
+	}
 
 	logger.LogDebug(ctx, "updateVideoSingleTask taskResult: %+v", taskResult)
 

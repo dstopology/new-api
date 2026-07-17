@@ -91,6 +91,17 @@ func SetRelayRouter(router *gin.Engine) {
 	relayV1Router.Use(middleware.SystemPerformanceCheck())
 	relayV1Router.Use(middleware.TokenAuth())
 	relayV1Router.Use(middleware.ModelRequestRateLimit())
+	asyncImageQueryRouter := router.Group("/v1")
+	asyncImageQueryRouter.Use(middleware.RouteTag("relay"))
+	asyncImageQueryRouter.Use(middleware.SystemPerformanceCheck())
+	asyncImageQueryRouter.Use(middleware.SkipUserRPMRateLimit())
+	asyncImageQueryRouter.Use(middleware.TokenAuth())
+	{
+		asyncImageQueryRouter.GET("/images/generations/:task_id", controller.RelayImageTaskFetch)
+		asyncImageQueryRouter.GET("/images/generations/:task_id/content/:media_id", controller.RelayImageContent)
+		asyncImageQueryRouter.GET("/images/edits/:task_id", controller.RelayImageTaskFetch)
+		asyncImageQueryRouter.GET("/images/edits/:task_id/content/:media_id", controller.RelayImageContent)
+	}
 	{
 		// WebSocket 路由（统一到 Relay）
 		wsRouter := relayV1Router.Group("")
@@ -128,13 +139,13 @@ func SetRelayRouter(router *gin.Engine) {
 
 		// image related routes
 		httpRouter.POST("/edits", func(c *gin.Context) {
-			controller.Relay(c, types.RelayFormatOpenAIImage)
+			controller.RelayImage(c)
 		})
 		httpRouter.POST("/images/generations", func(c *gin.Context) {
-			controller.Relay(c, types.RelayFormatOpenAIImage)
+			controller.RelayImage(c)
 		})
 		httpRouter.POST("/images/edits", func(c *gin.Context) {
-			controller.Relay(c, types.RelayFormatOpenAIImage)
+			controller.RelayImage(c)
 		})
 
 		// embedding related routes

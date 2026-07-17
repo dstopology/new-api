@@ -8,6 +8,8 @@ import (
 	"time"
 
 	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/constant"
+	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	"github.com/glebarez/sqlite"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -77,6 +79,38 @@ func insertTask(t *testing.T, task *Task) {
 	task.CreatedAt = time.Now().Unix()
 	task.UpdatedAt = time.Now().Unix()
 	require.NoError(t, DB.Create(task).Error)
+}
+
+func TestInitTaskAsyncImageStoresSubmissionKey(t *testing.T) {
+	info := &relaycommon.RelayInfo{
+		UserId:          9,
+		UsingGroup:      "default",
+		OriginModelName: "image-model",
+		TaskRelayInfo:   &relaycommon.TaskRelayInfo{PublicTaskID: "task_public"},
+		ChannelMeta: &relaycommon.ChannelMeta{
+			ChannelId:         3,
+			ApiKey:            "submission-key",
+			UpstreamModelName: "upstream-image-model",
+		},
+	}
+	task := InitTask(constant.TaskPlatformAsyncImage, info)
+	require.Equal(t, "submission-key", task.PrivateData.Key)
+	require.Equal(t, "task_public", task.TaskID)
+}
+
+func TestUnfinishedTaskQueriesSeparateAsyncImages(t *testing.T) {
+	truncateTables(t)
+	require.NoError(t, DB.Exec("DELETE FROM tasks").Error)
+	insertTask(t, &Task{TaskID: "task_video", Platform: constant.TaskPlatformSuno, Status: TaskStatusQueued, Progress: "20%", SubmitTime: time.Now().Unix()})
+	insertTask(t, &Task{TaskID: "task_image", Platform: constant.TaskPlatformAsyncImage, Status: TaskStatusQueued, Progress: "20%", SubmitTime: time.Now().Unix()})
+
+	general := GetAllUnFinishSyncTasks(10)
+	require.Len(t, general, 1)
+	require.Equal(t, "task_video", general[0].TaskID)
+
+	images := GetAllUnfinishedTasksByPlatform(constant.TaskPlatformAsyncImage, 10)
+	require.Len(t, images, 1)
+	require.Equal(t, "task_image", images[0].TaskID)
 }
 
 // ---------------------------------------------------------------------------

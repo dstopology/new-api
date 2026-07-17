@@ -173,7 +173,8 @@ func InitTask(platform constant.TaskPlatform, relayInfo *commonRelay.RelayInfo) 
 	properties := Properties{}
 	privateData := TaskPrivateData{}
 	if relayInfo != nil && relayInfo.ChannelMeta != nil {
-		if relayInfo.ChannelMeta.ChannelType == constant.ChannelTypeGemini ||
+		if platform == constant.TaskPlatformAsyncImage ||
+			relayInfo.ChannelMeta.ChannelType == constant.ChannelTypeGemini ||
 			relayInfo.ChannelMeta.ChannelType == constant.ChannelTypeVertexAi {
 			privateData.Key = relayInfo.ChannelMeta.ApiKey
 		}
@@ -303,11 +304,42 @@ func GetTimedOutUnfinishedTasks(cutoffUnix int64, limit int) []*Task {
 	return tasks
 }
 
+func GetTimedOutUnfinishedTasksByPlatform(platform constant.TaskPlatform, cutoffUnix int64, limit int) []*Task {
+	var tasks []*Task
+	err := DB.Where("platform = ?", platform).
+		Where("progress != ?", "100%").
+		Where("status NOT IN ?", []string{TaskStatusFailure, TaskStatusSuccess}).
+		Where("submit_time < ?", cutoffUnix).
+		Order("submit_time").
+		Limit(limit).
+		Find(&tasks).Error
+	if err != nil {
+		return nil
+	}
+	return tasks
+}
+
 func GetAllUnFinishSyncTasks(limit int) []*Task {
 	var tasks []*Task
 	var err error
 	// get all tasks progress is not 100%
-	err = DB.Where("progress != ?", "100%").Where("status != ?", TaskStatusFailure).Where("status != ?", TaskStatusSuccess).Limit(limit).Order("id").Find(&tasks).Error
+	err = DB.Where("platform IS NULL OR platform != ?", constant.TaskPlatformAsyncImage).
+		Where("progress != ?", "100%").
+		Where("status != ?", TaskStatusFailure).
+		Where("status != ?", TaskStatusSuccess).
+		Limit(limit).Order("id").Find(&tasks).Error
+	if err != nil {
+		return nil
+	}
+	return tasks
+}
+
+func GetAllUnfinishedTasksByPlatform(platform constant.TaskPlatform, limit int) []*Task {
+	var tasks []*Task
+	err := DB.Where("platform = ?", platform).
+		Where("progress != ?", "100%").
+		Where("status NOT IN ?", []string{TaskStatusFailure, TaskStatusSuccess}).
+		Order("id").Limit(limit).Find(&tasks).Error
 	if err != nil {
 		return nil
 	}

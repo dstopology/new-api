@@ -33,3 +33,25 @@ func TestImageRequestStreamPreservesExplicitValues(t *testing.T) {
 	require.Nil(t, streamAbsent.Stream)
 	require.False(t, streamAbsent.IsStream(nil))
 }
+
+func TestImageRequestAsyncPreservesExplicitValues(t *testing.T) {
+	var asyncTrue ImageRequest
+	require.NoError(t, common.Unmarshal([]byte(`{"model":"gpt-image-2","prompt":"draw","async":true}`), &asyncTrue))
+	require.NotNil(t, asyncTrue.Async)
+	require.True(t, *asyncTrue.Async)
+	body, err := common.Marshal(asyncTrue)
+	require.NoError(t, err)
+	require.Contains(t, string(body), `"async":true`)
+
+	var asyncFalse ImageRequest
+	require.NoError(t, common.Unmarshal([]byte(`{"model":"gpt-image-2","prompt":"draw","async":false}`), &asyncFalse))
+	require.NotNil(t, asyncFalse.Async)
+	require.False(t, *asyncFalse.Async)
+	body, err = common.Marshal(asyncFalse)
+	require.NoError(t, err)
+	require.Contains(t, string(body), `"async":false`)
+
+	var asyncAbsent ImageRequest
+	require.NoError(t, common.Unmarshal([]byte(`{"model":"gpt-image-2","prompt":"draw"}`), &asyncAbsent))
+	require.Nil(t, asyncAbsent.Async)
+}
