@@ -80,6 +80,7 @@ func TestDoResponseStoresOnlyPublicTaskData(t *testing.T) {
 	require.Equal(t, "upstream-private-id", upstreamID)
 	require.Contains(t, string(taskData), `"id":"task_public"`)
 	require.Contains(t, string(taskData), `"task_id":"task_public"`)
+	require.Contains(t, string(taskData), `"object":"video"`)
 	require.Contains(t, string(taskData), `"status":"in_progress"`)
 	require.NotContains(t, string(taskData), "upstream-private-id")
 	require.NotContains(t, string(taskData), "upstream.example")

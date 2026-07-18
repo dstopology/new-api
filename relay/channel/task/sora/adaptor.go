@@ -251,6 +251,7 @@ func (a *TaskAdaptor) DoResponse(c *gin.Context, resp *http.Response, info *rela
 	// 使用公开 task_xxxx ID 返回给客户端
 	dResp.ID = info.PublicTaskID
 	dResp.TaskID = info.PublicTaskID
+	dResp.Object = "video"
 	if dResp.Status == "running" {
 		dResp.Status = dto.VideoStatusInProgress
 	}
