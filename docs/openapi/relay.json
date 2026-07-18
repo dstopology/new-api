@@ -607,10 +607,58 @@
                     "example": "8",
                     "type": "string"
                   },
+                  "duration": {
+                    "description": "视频时长（秒）；与 seconds 二选一",
+                    "example": 8,
+                    "type": "integer"
+                  },
                   "size": {
                     "description": "视频尺寸（模型支持时）",
                     "example": "1280x720",
                     "type": "string"
+                  },
+                  "aspect_ratio": {
+                    "description": "Firefly Sora/Veo 画幅比例",
+                    "example": "16:9",
+                    "type": "string",
+                    "enum": [
+                      "16:9",
+                      "9:16"
+                    ]
+                  },
+                  "resolution": {
+                    "description": "Firefly Veo 分辨率",
+                    "example": "720p",
+                    "type": "string",
+                    "enum": [
+                      "720p",
+                      "1080p"
+                    ]
+                  },
+                  "generate_audio": {
+                    "description": "是否生成音频；当前 Sora 上游不能可靠执行 false",
+                    "example": false,
+                    "type": "boolean"
+                  },
+                  "images": {
+                    "description": "有序参考图 URL 或 data URI；数量与顺序语义由模型决定",
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  },
+                  "negative_prompt": {
+                    "description": "负面提示词；仅 sora-2 与 sora-2-pro 支持",
+                    "example": "watermark, camera shake",
+                    "type": "string"
+                  },
+                  "reference_mode": {
+                    "description": "Firefly 固定参考模式；new-api 会根据模型自动设置",
+                    "type": "string",
+                    "enum": [
+                      "frame",
+                      "image"
+                    ]
                   }
                 }
               }

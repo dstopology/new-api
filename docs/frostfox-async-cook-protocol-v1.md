@@ -347,7 +347,19 @@ Content-Type: application/json
 
 ### 3.5 视频提交、查询与取货
 
-第一阶段文本生成视频使用：
+视频生成与图片生成共用同一套异步 Job 状态机。以下五个模型已使用真实上游任务完成提交、轮询和取片验证：
+
+| 模型 | `duration` | `resolution` | 有序 `images` | `negative_prompt` | 图片语义 |
+| --- | --- | --- | --- | --- | --- |
+| `sora-2` | `4` / `8` / `12` | 不传 | 0～1 张 | 支持 | 第 1 张为帧参考 |
+| `sora-2-pro` | `4` / `8` / `12` | 不传 | 0～1 张 | 支持 | 第 1 张为帧参考 |
+| `veo-3-1` | `4` / `6` / `8` | `720p` / `1080p` | 0～2 张 | 不支持 | 第 1 张首帧，第 2 张尾帧 |
+| `veo-3-1-fast` | `4` / `6` / `8` | `720p` / `1080p` | 0～2 张 | 不支持 | 第 1 张首帧，第 2 张尾帧 |
+| `veo-3-1-ref` | `8` | `720p` / `1080p` | 0～3 张 | 不支持 | 第 1～3 张均为主体或素材参考 |
+
+上游文档虽然为 `veo-3-1-ref` 展示了 `4` / `6` / `8` 秒，但当前实时接口会在异步提交后拒绝非 8 秒任务。new-api 因此在提交前只接受 8 秒，避免 FrostFox 等待后才得到失败结果。
+
+提交使用 JSON：
 
 ```http
 POST {NEW_API_BASE_URL}/v1/videos
@@ -360,9 +372,56 @@ Accept: application/json
 ```json
 {
   "model": "veo-3-1-fast",
-  "prompt": "A red paper square slowly rotates on a white background"
+  "prompt": "Transition smoothly from the first frame to the last frame",
+  "duration": 4,
+  "aspect_ratio": "16:9",
+  "resolution": "720p",
+  "generate_audio": false,
+  "images": [
+    "https://assets.example/first-frame.png",
+    "data:image/png;base64,..."
+  ]
 }
 ```
+
+`images` 必须是有序数组，元素只能是上游可访问的 HTTP(S) URL 或 JPEG/PNG/WebP data URI，单张不超过 10MB。FrostFox 应优先发送短期签名 HTTPS URL；资源无法公开访问时再使用 data URI。签名 URL 的有效期必须覆盖上游读取输入的时间，并且不得被写入最终 Asset 或下发给浏览器。
+
+不要为这五个模型发送 JSON `image`、JSON `input_reference` 或重复 multipart `input_reference`。这些是其他视频协议的字段，不能替代本协议的 `images` 数组。new-api 会根据模型自动写入上游固定的 `reference_mode`：Sora 和 Veo 标准/快速为 `frame`，Veo Ref 为 `image`；FrostFox 不需要发送该字段。
+
+Sora 示例：
+
+```json
+{
+  "model": "sora-2",
+  "prompt": "Animate the supplied frame with a slow camera move",
+  "negative_prompt": "watermark, camera shake, subject deformation",
+  "duration": 4,
+  "aspect_ratio": "16:9",
+  "images": ["https://assets.example/frame.png"]
+}
+```
+
+Veo Ref 示例：
+
+```json
+{
+  "model": "veo-3-1-ref",
+  "prompt": "Keep all three supplied subjects recognizable",
+  "duration": 8,
+  "aspect_ratio": "16:9",
+  "resolution": "1080p",
+  "generate_audio": false,
+  "images": [
+    "https://assets.example/subject.png",
+    "https://assets.example/product.png",
+    "https://assets.example/style.png"
+  ]
+}
+```
+
+当前上游对两款 Sora 都会忽略 `generate_audio: false` 并生成非静音音轨。new-api 会拒绝该组合；FrostFox 的 Sora Node 暂时不要显示关闭音频选项。Veo 的 `generate_audio: false` 已验证会生成无音轨视频。
+
+视频 Cook Cache Key 必须包含模型、prompt、negative prompt、duration、aspect ratio、resolution、generate audio，以及按数组顺序排列的每个输入 Asset 内容哈希。首尾帧交换顺序必须产生不同的 Cache Key。
 
 `Idempotency-Key` 仍应发送并持久化，便于后续协议升级，但当前视频 POST 不保证按该 Header 去重。Worker 对每个 Job 只能主动提交一次；POST 出现断线、超时或无法判断的 `5xx` 时必须进入 `submission_unknown`，禁止自动再次 POST。
 
