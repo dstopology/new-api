@@ -4670,6 +4670,14 @@
     "This will permanently delete {{name}}.": "This will permanently delete {{name}}.",
     "Used in the public skill URL.": "Used in the public skill URL.",
     "User Prompt Addition": "User Prompt Addition",
-    "User Prompt Addition Text": "User Prompt Addition Text"
+    "User Prompt Addition Text": "User Prompt Addition Text",
+    "Enable Node Studio": "Enable Node Studio",
+    "Enter the same secret in new-api and Node Studio. Leave blank to keep the existing secret.": "Enter the same secret in new-api and Node Studio. Leave blank to keep the existing secret.",
+    "Node Studio": "Node Studio",
+    "Node Studio receiving URL": "Node Studio receiving URL",
+    "Save Node Studio settings": "Save Node Studio settings",
+    "Shared secret": "Shared secret",
+    "Show Node Studio in the header after the receiving URL and shared secret are configured.": "Show Node Studio in the header after the receiving URL and shared secret are configured.",
+    "The Node backend endpoint that accepts the encrypted payload by form POST.": "The Node backend endpoint that accepts the encrypted payload by form POST."
   }
 }

@@ -4670,6 +4670,14 @@
     "This will permanently delete {{name}}.": "这将永久删除 {{name}}。",
     "Used in the public skill URL.": "用于公共技能 URL。",
     "User Prompt Addition": "用户提示词追加",
-    "User Prompt Addition Text": "用户提示词追加内容"
+    "User Prompt Addition Text": "用户提示词追加内容",
+    "Enable Node Studio": "启用 Node 工作室",
+    "Enter the same secret in new-api and Node Studio. Leave blank to keep the existing secret.": "在 new-api 和 Node 工作室中填写相同的密钥。留空可保留现有密钥。",
+    "Node Studio": "Node 工作室",
+    "Node Studio receiving URL": "Node 工作室接收地址",
+    "Save Node Studio settings": "保存 Node 工作室设置",
+    "Shared secret": "共享密钥",
+    "Show Node Studio in the header after the receiving URL and shared secret are configured.": "接收地址和共享密钥配置完成后，在顶部导航中显示 Node 工作室。",
+    "The Node backend endpoint that accepts the encrypted payload by form POST.": "Node 后端通过表单 POST 接收加密包的接口地址。"
   }
 }

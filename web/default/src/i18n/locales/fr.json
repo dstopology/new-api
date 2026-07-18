@@ -4670,6 +4670,14 @@
     "This will permanently delete {{name}}.": "Cette action supprimera définitivement {{name}}.",
     "Used in the public skill URL.": "Utilisé dans l’URL publique de la compétence.",
     "User Prompt Addition": "Ajout au prompt utilisateur",
-    "User Prompt Addition Text": "Texte ajouté au prompt utilisateur"
+    "User Prompt Addition Text": "Texte ajouté au prompt utilisateur",
+    "Enable Node Studio": "Activer Node Studio",
+    "Enter the same secret in new-api and Node Studio. Leave blank to keep the existing secret.": "Saisissez le même secret dans new-api et Node Studio. Laissez ce champ vide pour conserver le secret existant.",
+    "Node Studio": "Node Studio",
+    "Node Studio receiving URL": "URL de réception de Node Studio",
+    "Save Node Studio settings": "Enregistrer les paramètres de Node Studio",
+    "Shared secret": "Secret partagé",
+    "Show Node Studio in the header after the receiving URL and shared secret are configured.": "Afficher Node Studio dans l'en-tête une fois l'URL de réception et le secret partagé configurés.",
+    "The Node backend endpoint that accepts the encrypted payload by form POST.": "Le point de terminaison du backend Node qui accepte le paquet chiffré via un formulaire POST."
   }
 }

@@ -4670,6 +4670,14 @@
     "This will permanently delete {{name}}.": "{{name}} は完全に削除されます。",
     "Used in the public skill URL.": "公開スキル URL に使用されます。",
     "User Prompt Addition": "ユーザープロンプトの追加",
-    "User Prompt Addition Text": "ユーザープロンプトに追加するテキスト"
+    "User Prompt Addition Text": "ユーザープロンプトに追加するテキスト",
+    "Enable Node Studio": "Node Studio を有効にする",
+    "Enter the same secret in new-api and Node Studio. Leave blank to keep the existing secret.": "new-api と Node Studio に同じシークレットを入力してください。既存のシークレットを保持する場合は空欄にします。",
+    "Node Studio": "Node スタジオ",
+    "Node Studio receiving URL": "Node Studio 受信 URL",
+    "Save Node Studio settings": "Node Studio の設定を保存",
+    "Shared secret": "共有シークレット",
+    "Show Node Studio in the header after the receiving URL and shared secret are configured.": "受信 URL と共有シークレットの設定後、ヘッダーに Node Studio を表示します。",
+    "The Node backend endpoint that accepts the encrypted payload by form POST.": "暗号化されたペイロードをフォーム POST で受信する Node バックエンドのエンドポイントです。"
   }
 }

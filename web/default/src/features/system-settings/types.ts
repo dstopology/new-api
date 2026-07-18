@@ -301,6 +301,9 @@ export type OperationsSettings = {
   WorkerUrl: string
   WorkerValidKey: string
   WorkerAllowHttpImageRequestEnabled: boolean
+  'node_studio.enabled': boolean
+  'node_studio.url': string
+  'node_studio.secret': string
   LogConsumeEnabled: boolean
   'conversation_archive_setting.enabled': boolean
   'conversation_archive_setting.dump_enabled': boolean

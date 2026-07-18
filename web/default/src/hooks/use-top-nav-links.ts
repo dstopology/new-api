@@ -71,6 +71,14 @@ export function useTopNavLinks(): TopNavLink[] {
     links.push({ title: t('Console'), href: '/dashboard' })
   }
 
+  if (status?.node_studio_enabled === true && isAuthed) {
+    links.push({
+      title: t('Node Studio'),
+      href: '/api/node-studio/handoff',
+      external: true,
+    })
+  }
+
   // Pricing
   const pricing = modules?.pricing
   if (pricing && typeof pricing === 'object' && pricing.enabled) {

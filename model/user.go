@@ -141,6 +141,44 @@ func (user *User) SetAccessToken(token string) {
 	user.AccessToken = &token
 }
 
+// EnsureAccessToken returns the existing dashboard access token or creates one
+// once. The conditional update avoids rotating an access token when two
+// handoff requests arrive at the same time.
+func (user *User) EnsureAccessToken() (string, error) {
+	if user.Id == 0 {
+		return "", errors.New("user id is empty")
+	}
+	if token := strings.TrimSpace(user.GetAccessToken()); token != "" {
+		return token, nil
+	}
+
+	token, err := common.GenerateRandomKey(32)
+	if err != nil {
+		return "", err
+	}
+	result := DB.Model(&User{}).
+		Where("id = ? AND (access_token IS NULL OR access_token = ?)", user.Id, "").
+		Update("access_token", token)
+	if result.Error != nil {
+		return "", result.Error
+	}
+	if result.RowsAffected > 0 {
+		user.SetAccessToken(token)
+		return token, nil
+	}
+
+	var persisted User
+	if err = DB.Select("access_token").First(&persisted, "id = ?", user.Id).Error; err != nil {
+		return "", err
+	}
+	token = strings.TrimSpace(persisted.GetAccessToken())
+	if token == "" {
+		return "", errors.New("failed to create user access token")
+	}
+	user.SetAccessToken(token)
+	return token, nil
+}
+
 func (user *User) GetSetting() dto.UserSetting {
 	setting := dto.UserSetting{}
 	if user.Setting != "" {

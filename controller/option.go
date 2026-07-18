@@ -246,6 +246,29 @@ func UpdateOption(c *gin.Context) {
 			})
 			return
 		}
+	case "node_studio.url":
+		value := strings.TrimSpace(option.Value.(string))
+		if err := system_setting.ValidateNodeStudioURL(value); err != nil {
+			common.ApiErrorMsg(c, "Node 工作室接收地址必须是有效的 HTTP 或 HTTPS URL")
+			return
+		}
+	case "node_studio.secret":
+		if system_setting.GetNodeStudioSettings().Enabled && strings.TrimSpace(option.Value.(string)) == "" {
+			common.ApiErrorMsg(c, "请先关闭 Node 工作室，再清空共享密钥")
+			return
+		}
+	case "node_studio.enabled":
+		if option.Value == "true" {
+			settings := system_setting.GetNodeStudioSettings()
+			if strings.TrimSpace(settings.Secret) == "" {
+				common.ApiErrorMsg(c, "无法启用 Node 工作室，请先设置共享密钥")
+				return
+			}
+			if err := system_setting.ValidateNodeStudioURL(settings.URL); err != nil {
+				common.ApiErrorMsg(c, "无法启用 Node 工作室，请先设置有效的接收地址")
+				return
+			}
+		}
 	case "theme.frontend":
 		if option.Value != "default" && option.Value != "classic" {
 			c.JSON(http.StatusOK, gin.H{

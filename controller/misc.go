@@ -123,6 +123,7 @@ func GetStatus(c *gin.Context) {
 		"user_agreement_enabled":      legalSetting.UserAgreement != "",
 		"privacy_policy_enabled":      legalSetting.PrivacyPolicy != "",
 		"checkin_enabled":             operation_setting.GetCheckinSetting().Enabled,
+		"node_studio_enabled":         system_setting.IsNodeStudioReady(),
 	}
 
 	// 根据启用状态注入可选内容

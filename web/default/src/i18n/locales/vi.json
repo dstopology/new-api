@@ -4670,6 +4670,14 @@
     "This will permanently delete {{name}}.": "Thao tác này sẽ xóa vĩnh viễn {{name}}.",
     "Used in the public skill URL.": "Được dùng trong URL kỹ năng công khai.",
     "User Prompt Addition": "Bổ sung lời nhắc người dùng",
-    "User Prompt Addition Text": "Văn bản bổ sung lời nhắc người dùng"
+    "User Prompt Addition Text": "Văn bản bổ sung lời nhắc người dùng",
+    "Enable Node Studio": "Bật Node Studio",
+    "Enter the same secret in new-api and Node Studio. Leave blank to keep the existing secret.": "Nhập cùng một khóa bí mật trong new-api và Node Studio. Để trống để giữ khóa hiện có.",
+    "Node Studio": "Node Studio",
+    "Node Studio receiving URL": "URL tiếp nhận của Node Studio",
+    "Save Node Studio settings": "Lưu cài đặt Node Studio",
+    "Shared secret": "Khóa bí mật dùng chung",
+    "Show Node Studio in the header after the receiving URL and shared secret are configured.": "Hiển thị Node Studio trên thanh đầu trang sau khi cấu hình URL tiếp nhận và khóa bí mật dùng chung.",
+    "The Node backend endpoint that accepts the encrypted payload by form POST.": "Điểm cuối backend Node nhận gói dữ liệu đã mã hóa bằng biểu mẫu POST."
   }
 }
