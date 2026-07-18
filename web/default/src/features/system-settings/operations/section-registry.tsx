@@ -101,9 +101,9 @@ const OPERATIONS_SECTIONS = [
     build: (settings: OperationsSettings) => (
       <NodeStudioSettingsSection
         defaultValues={{
-          'node_studio.enabled': settings['node_studio.enabled'],
-          'node_studio.url': settings['node_studio.url'],
-          'node_studio.secret': settings['node_studio.secret'],
+          enabled: settings['node_studio.enabled'],
+          url: settings['node_studio.url'],
+          secret: settings['node_studio.secret'],
         }}
       />
     ),

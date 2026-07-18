@@ -43,8 +43,8 @@ import { useUpdateOption } from '../hooks/use-update-option'
 
 const createNodeStudioSchema = (t: (key: string) => string) =>
   z.object({
-    'node_studio.enabled': z.boolean(),
-    'node_studio.url': z.string().refine((value) => {
+    enabled: z.boolean(),
+    url: z.string().refine((value) => {
       try {
         const parsed = new URL(value.trim())
         return (
@@ -55,7 +55,7 @@ const createNodeStudioSchema = (t: (key: string) => string) =>
         return false
       }
     }, t('Provide a valid URL starting with http:// or https://')),
-    'node_studio.secret': z.string(),
+    secret: z.string(),
   })
 
 type NodeStudioFormValues = z.infer<
@@ -80,11 +80,11 @@ export function NodeStudioSettingsSection({
   useResetForm(form, defaultValues)
 
   const onSubmit = async (values: NodeStudioFormValues) => {
-    const enabled = values['node_studio.enabled']
-    const url = values['node_studio.url'].trim()
-    const secret = values['node_studio.secret'].trim()
-    const wasEnabled = defaultValues['node_studio.enabled']
-    const initialURL = defaultValues['node_studio.url'].trim()
+    const enabled = values.enabled
+    const url = values.url.trim()
+    const secret = values.secret.trim()
+    const wasEnabled = defaultValues.enabled
+    const initialURL = defaultValues.url.trim()
 
     if (!enabled && wasEnabled) {
       await updateOption.mutateAsync({
@@ -121,7 +121,7 @@ export function NodeStudioSettingsSection({
 
           <FormField
             control={form.control}
-            name='node_studio.enabled'
+            name='enabled'
             render={({ field }) => (
               <SettingsSwitchItem>
                 <SettingsSwitchContent>
@@ -145,7 +145,7 @@ export function NodeStudioSettingsSection({
 
           <FormField
             control={form.control}
-            name='node_studio.url'
+            name='url'
             render={({ field }) => (
               <FormItem>
                 <FormLabel>{t('Node Studio receiving URL')}</FormLabel>
@@ -170,7 +170,7 @@ export function NodeStudioSettingsSection({
 
           <FormField
             control={form.control}
-            name='node_studio.secret'
+            name='secret'
             render={({ field }) => (
               <FormItem>
                 <FormLabel>{t('Shared secret')}</FormLabel>
