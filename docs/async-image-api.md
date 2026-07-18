@@ -7,6 +7,7 @@
 ```http
 POST /v1/images/generations
 Authorization: Bearer <token>
+Idempotency-Key: <uuid>
 Content-Type: application/json
 ```
 
@@ -34,6 +35,19 @@ Content-Type: application/json
 ```
 
 图生图可以向 `POST /v1/images/edits` 提交 JSON 或 multipart 请求，同样需要传 `async=true`。
+
+### 提交幂等
+
+异步图片会在调用上游之前先创建本地任务记录，并在任务记录成功保存上游任务 ID 和公开响应后才返回 HTTP `200`。
+
+平台后端应为一次生成使用固定的 `Idempotency-Key`。Key 最长 128 个可见 ASCII 字符，并按 new-api 用户隔离：
+
+- 相同 Key、相同语义请求会返回已有 `task_xxx`，响应头包含 `Idempotent-Replayed: true`，不会再次请求上游或重复计费。
+- 相同 Key、不同请求返回 HTTP `409 idempotency_conflict`。
+- JSON 字段顺序、multipart boundary 和上传文件名不参与语义差异判断；表单字段和文件内容参与请求指纹。
+- 网络断开、超时或 `5xx` 后可以使用完全相同的 Key 和请求安全重试 POST。
+
+不传 `Idempotency-Key` 时仍会先落库再请求上游，但无法通过重试关联原任务，因此正式计费接入必须传该 Header。
 
 ## 查询任务
 

@@ -67,4 +67,9 @@ const (
 	// ContextKeyLanguage stores the user's language preference for i18n
 	ContextKeyLanguage ContextKey = "language"
 	ContextKeyIsStream ContextKey = "is_stream"
+
+	// Async image idempotency metadata is computed before channel selection so
+	// completed requests can be replayed without touching billing or upstreams.
+	ContextKeyAsyncImageIdempotencyKey ContextKey = "async_image_idempotency_key"
+	ContextKeyAsyncImageRequestHash    ContextKey = "async_image_request_hash"
 )

@@ -103,6 +103,9 @@ func sweepTimedOutAsyncImageTasks(ctx context.Context) {
 	for _, task := range tasks {
 		oldStatus := task.Status
 		task.Status = model.TaskStatusFailure
+		if task.SubmissionState == model.TaskSubmissionStateReserved {
+			task.SubmissionState = model.TaskSubmissionStateUnknown
+		}
 		task.Progress = "100%"
 		task.FinishTime = now
 		task.FailReason = reason

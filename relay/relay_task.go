@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
@@ -27,7 +28,133 @@ type TaskSubmitResult struct {
 	TaskData       []byte
 	Platform       constant.TaskPlatform
 	Quota          int
+	Task           *model.Task
+	Replayed       bool
 	//PerCallPrice   types.PriceData
+}
+
+func reserveAsyncImageSubmission(
+	c *gin.Context,
+	info *relaycommon.RelayInfo,
+	platform constant.TaskPlatform,
+) (*model.Task, *TaskSubmitResult, *dto.TaskError) {
+	if platform != constant.TaskPlatformAsyncImage {
+		return nil, nil, nil
+	}
+
+	task := model.InitTask(platform, info)
+	task.Action = info.Action
+	task.SubmissionState = model.TaskSubmissionStateReserved
+	key := common.GetContextKeyString(c, constant.ContextKeyAsyncImageIdempotencyKey)
+	requestHash := common.GetContextKeyString(c, constant.ContextKeyAsyncImageRequestHash)
+	if key != "" {
+		if requestHash == "" {
+			return nil, nil, service.TaskErrorWrapperLocal(
+				errors.New("idempotency request hash is missing"),
+				"invalid_idempotency_key",
+				http.StatusBadRequest,
+			)
+		}
+		task.IdempotencyKey = &key
+		task.RequestHash = requestHash
+	}
+
+	reserved, replayed, err := model.ReserveAsyncImageTask(task)
+	if err != nil {
+		return nil, nil, service.TaskErrorWrapper(
+			err,
+			"task_reservation_failed",
+			http.StatusInternalServerError,
+		)
+	}
+	if !replayed {
+		return reserved, nil, nil
+	}
+	if reserved.RequestHash == "" || reserved.RequestHash != requestHash {
+		return nil, nil, service.TaskErrorWrapperLocal(
+			errors.New("Idempotency-Key was already used with a different request"),
+			"idempotency_conflict",
+			http.StatusConflict,
+		)
+	}
+	info.PublicTaskID = reserved.TaskID
+	response, err := service.BuildAsyncImageTaskResponse(reserved)
+	if err != nil {
+		return nil, nil, service.TaskErrorWrapper(
+			err,
+			"idempotency_replay_failed",
+			http.StatusInternalServerError,
+		)
+	}
+	responseData, err := common.Marshal(response)
+	if err != nil {
+		return nil, nil, service.TaskErrorWrapper(
+			err,
+			"idempotency_replay_failed",
+			http.StatusInternalServerError,
+		)
+	}
+	return reserved, &TaskSubmitResult{
+		TaskData: responseData,
+		Platform: platform,
+		Task:     reserved,
+		Replayed: true,
+	}, nil
+}
+
+func populateAsyncImageTaskBilling(task *model.Task, info *relaycommon.RelayInfo, quota int) {
+	task.Quota = quota
+	task.PrivateData.BillingSource = info.BillingSource
+	task.PrivateData.SubscriptionId = info.SubscriptionId
+	task.PrivateData.TokenId = info.TokenId
+	task.PrivateData.BillingContext = &model.TaskBillingContext{
+		ModelPrice:      info.PriceData.ModelPrice,
+		GroupRatio:      info.PriceData.GroupRatioInfo.GroupRatio,
+		ModelRatio:      info.PriceData.ModelRatio,
+		OtherRatios:     info.PriceData.OtherRatios,
+		OriginModelName: info.OriginModelName,
+		PerCallBilling:  common.StringsContains(constant.TaskPricePatches, info.OriginModelName) || info.PriceData.UsePrice,
+	}
+}
+
+func markAsyncImageSubmissionFailed(task *model.Task, state string, reason string) {
+	if task == nil {
+		return
+	}
+	task.Status = model.TaskStatusFailure
+	task.Progress = "100%"
+	task.FinishTime = time.Now().Unix()
+	task.FailReason = reason
+	task.Quota = 0
+	task.SubmissionState = state
+	if _, err := task.UpdateWithSubmissionState(model.TaskSubmissionStateReserved); err != nil {
+		common.SysError("mark async image submission failed: " + err.Error())
+	}
+}
+
+func markAsyncImageSubmissionUnknown(task *model.Task) {
+	markAsyncImageSubmissionFailed(
+		task,
+		model.TaskSubmissionStateUnknown,
+		"submission result is unknown",
+	)
+}
+
+func markAsyncImageSubmissionRejected(task *model.Task) {
+	markAsyncImageSubmissionFailed(
+		task,
+		model.TaskSubmissionStateRejected,
+		"submission was rejected",
+	)
+}
+
+func deleteAsyncImageReservation(task *model.Task) {
+	if task == nil {
+		return
+	}
+	if err := model.DeleteAsyncImageTaskReservation(task.ID); err != nil {
+		common.SysError("delete async image task reservation: " + err.Error())
+	}
 }
 
 // ResolveOriginTask 处理基于已有任务的提交（remix / continuation）：
@@ -206,8 +333,9 @@ func RelayTaskSubmit(c *gin.Context, info *relaycommon.RelayInfo) (*TaskSubmitRe
 		}
 	}
 
-	// 7. 预扣费（仅首次 — 重试时 info.Billing 已存在，跳过）
-	if info.Billing == nil && !info.PriceData.FreeModel {
+	// 7. 非异步图片任务维持原有顺序；异步图片必须先建立 durable
+	// reservation，命中幂等回放时不能触碰计费。
+	if platform != constant.TaskPlatformAsyncImage && info.Billing == nil && !info.PriceData.FreeModel {
 		info.ForcePreConsume = true
 		if apiErr := service.PreConsumeBilling(c, info.PriceData.Quota, info); apiErr != nil {
 			return nil, service.TaskErrorFromAPIError(apiErr)
@@ -220,13 +348,50 @@ func RelayTaskSubmit(c *gin.Context, info *relaycommon.RelayInfo) (*TaskSubmitRe
 		return nil, service.TaskErrorWrapper(err, "build_request_failed", http.StatusInternalServerError)
 	}
 
+	// 8.5 异步图片在任何上游 I/O 前先落库。并发请求若使用同一
+	// Idempotency-Key，将在唯一约束处汇合并直接回放现有公开任务。
+	reservation, replayResult, reserveErr := reserveAsyncImageSubmission(c, info, platform)
+	if reserveErr != nil {
+		return nil, reserveErr
+	}
+	if replayResult != nil {
+		c.Header("Idempotent-Replayed", "true")
+		return replayResult, nil
+	}
+
+	if platform == constant.TaskPlatformAsyncImage && info.Billing == nil && !info.PriceData.FreeModel {
+		info.ForcePreConsume = true
+		if apiErr := service.PreConsumeBilling(c, info.PriceData.Quota, info); apiErr != nil {
+			markAsyncImageSubmissionRejected(reservation)
+			return nil, service.TaskErrorFromAPIError(apiErr)
+		}
+	}
+	if reservation != nil {
+		populateAsyncImageTaskBilling(reservation, info, info.PriceData.Quota)
+		won, updateErr := reservation.UpdateWithSubmissionState(model.TaskSubmissionStateReserved)
+		if updateErr != nil || !won {
+			deleteAsyncImageReservation(reservation)
+			if updateErr == nil {
+				updateErr = errors.New("async image task reservation was concurrently changed")
+			}
+			return nil, service.TaskErrorWrapper(updateErr, "task_reservation_update_failed", http.StatusInternalServerError)
+		}
+	}
+
 	// 9. 发送请求
 	resp, err := adaptor.DoRequest(c, info, requestBody)
 	if err != nil {
+		markAsyncImageSubmissionUnknown(reservation)
 		return nil, service.TaskErrorWrapper(err, "do_request_failed", http.StatusInternalServerError)
 	}
 	if resp != nil && resp.StatusCode != http.StatusOK {
 		responseBody, _ := io.ReadAll(resp.Body)
+		_ = resp.Body.Close()
+		if resp.StatusCode == http.StatusRequestTimeout || resp.StatusCode == http.StatusTooEarly || resp.StatusCode >= http.StatusInternalServerError {
+			markAsyncImageSubmissionUnknown(reservation)
+		} else {
+			markAsyncImageSubmissionRejected(reservation)
+		}
 		return nil, service.TaskErrorWrapper(fmt.Errorf("%s", string(responseBody)), "fail_to_fetch_task", resp.StatusCode)
 	}
 
@@ -241,6 +406,7 @@ func RelayTaskSubmit(c *gin.Context, info *relaycommon.RelayInfo) (*TaskSubmitRe
 	// 11. 解析响应
 	upstreamTaskID, taskData, taskErr := adaptor.DoResponse(c, resp, info)
 	if taskErr != nil {
+		markAsyncImageSubmissionUnknown(reservation)
 		return nil, taskErr
 	}
 
@@ -253,12 +419,29 @@ func RelayTaskSubmit(c *gin.Context, info *relaycommon.RelayInfo) (*TaskSubmitRe
 		info.PriceData.Quota = finalQuota
 	}
 
-	return &TaskSubmitResult{
+	result := &TaskSubmitResult{
 		UpstreamTaskID: upstreamTaskID,
 		TaskData:       taskData,
 		Platform:       platform,
 		Quota:          finalQuota,
-	}, nil
+		Task:           reservation,
+	}
+	if reservation != nil {
+		reservation.PrivateData.UpstreamTaskID = upstreamTaskID
+		populateAsyncImageTaskBilling(reservation, info, finalQuota)
+		reservation.Data = taskData
+		reservation.Action = info.Action
+		reservation.SubmissionState = model.TaskSubmissionStateSubmitted
+		won, updateErr := reservation.UpdateWithSubmissionState(model.TaskSubmissionStateReserved)
+		if updateErr != nil || !won {
+			if updateErr == nil {
+				updateErr = errors.New("async image task reservation was concurrently changed")
+			}
+			markAsyncImageSubmissionUnknown(reservation)
+			return nil, service.TaskErrorWrapper(updateErr, "task_persist_failed", http.StatusInternalServerError)
+		}
+	}
+	return result, nil
 }
 
 // recalcQuotaFromRatios 根据 adjustedRatios 重新计算 quota。

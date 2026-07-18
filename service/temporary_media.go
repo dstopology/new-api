@@ -454,7 +454,14 @@ func BuildAsyncImageTaskResponse(task *model.Task) (*dto.AsyncImageTaskResponse,
 		}
 	}
 	if task.Status == model.TaskStatusFailure {
-		response.Error = &dto.AsyncImageTaskError{Code: "generation_failed", Message: task.FailReason}
+		code := "generation_failed"
+		switch task.SubmissionState {
+		case model.TaskSubmissionStateUnknown:
+			code = "submission_unknown"
+		case model.TaskSubmissionStateRejected:
+			code = "submission_rejected"
+		}
+		response.Error = &dto.AsyncImageTaskError{Code: code, Message: task.FailReason}
 		return response, nil
 	}
 	if task.Status != model.TaskStatusSuccess {

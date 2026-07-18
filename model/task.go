@@ -4,12 +4,15 @@ import (
 	"bytes"
 	"database/sql/driver"
 	"encoding/json"
+	"errors"
+	"strings"
 	"time"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/dto"
 	commonRelay "github.com/QuantumNous/new-api/relay/common"
+	"gorm.io/gorm/clause"
 )
 
 type TaskStatus string
@@ -41,13 +44,20 @@ const (
 	TaskStatusUnknown               = "UNKNOWN"
 )
 
+const (
+	TaskSubmissionStateReserved  = "reserved"
+	TaskSubmissionStateSubmitted = "submitted"
+	TaskSubmissionStateRejected  = "rejected"
+	TaskSubmissionStateUnknown   = "unknown"
+)
+
 type Task struct {
 	ID         int64                 `json:"id" gorm:"primary_key;AUTO_INCREMENT"`
 	CreatedAt  int64                 `json:"created_at" gorm:"index"`
 	UpdatedAt  int64                 `json:"updated_at"`
 	TaskID     string                `json:"task_id" gorm:"type:varchar(191);index"` // 第三方id，不一定有/ song id\ Task id
 	Platform   constant.TaskPlatform `json:"platform" gorm:"type:varchar(30);index"` // 平台
-	UserId     int                   `json:"user_id" gorm:"index"`
+	UserId     int                   `json:"user_id" gorm:"index;uniqueIndex:idx_task_user_idempotency,priority:1"`
 	Group      string                `json:"group" gorm:"type:varchar(50)"` // 修正计费用
 	ChannelId  int                   `json:"channel_id" gorm:"index"`
 	Quota      int                   `json:"quota"`
@@ -63,6 +73,11 @@ type Task struct {
 	// 禁止返回给用户，内部可能包含key等隐私信息
 	PrivateData TaskPrivateData `json:"-" gorm:"column:private_data;type:json"`
 	Data        json.RawMessage `json:"data" gorm:"type:json"`
+	// Nullable keys allow any number of legacy/non-idempotent tasks under the
+	// composite unique index on all supported databases.
+	IdempotencyKey  *string `json:"-" gorm:"type:varchar(128);uniqueIndex:idx_task_user_idempotency,priority:2"`
+	RequestHash     string  `json:"-" gorm:"type:varchar(64)"`
+	SubmissionState string  `json:"-" gorm:"type:varchar(20);index"`
 }
 
 func (t *Task) SetData(data any) {
@@ -337,6 +352,7 @@ func GetAllUnFinishSyncTasks(limit int) []*Task {
 func GetAllUnfinishedTasksByPlatform(platform constant.TaskPlatform, limit int) []*Task {
 	var tasks []*Task
 	err := DB.Where("platform = ?", platform).
+		Where("submission_state IS NULL OR submission_state != ?", TaskSubmissionStateReserved).
 		Where("progress != ?", "100%").
 		Where("status NOT IN ?", []string{TaskStatusFailure, TaskStatusSuccess}).
 		Order("id").Limit(limit).Find(&tasks).Error
@@ -393,6 +409,79 @@ func (Task *Task) Insert() error {
 	var err error
 	err = DB.Create(Task).Error
 	return err
+}
+
+// ReserveAsyncImageTask creates the durable task row before the upstream POST.
+// A duplicate user-scoped key returns the existing task for hash validation
+// and response replay instead of issuing a second provider request.
+func ReserveAsyncImageTask(task *Task) (*Task, bool, error) {
+	if task == nil {
+		return nil, false, errors.New("task is nil")
+	}
+	if task.IdempotencyKey == nil {
+		if err := DB.Create(task).Error; err != nil {
+			return nil, false, err
+		}
+		return task, false, nil
+	}
+	result := DB.Clauses(clause.OnConflict{
+		Columns:   []clause.Column{{Name: "user_id"}, {Name: "idempotency_key"}},
+		DoNothing: true,
+	}).Create(task)
+	if result.Error != nil {
+		return nil, false, result.Error
+	}
+
+	var existing Task
+	queryErr := DB.Where("user_id = ? AND idempotency_key = ?", task.UserId, *task.IdempotencyKey).
+		First(&existing).Error
+	exists, queryErr := RecordExist(queryErr)
+	if queryErr != nil || !exists {
+		if queryErr != nil {
+			return nil, false, queryErr
+		}
+		return nil, false, errors.New("idempotent task reservation was not found")
+	}
+	if existing.TaskID == task.TaskID {
+		return &existing, false, nil
+	}
+	return &existing, true, nil
+}
+
+func GetAsyncImageTaskByIdempotency(userID int, key string) (*Task, bool, error) {
+	key = strings.TrimSpace(key)
+	if key == "" {
+		return nil, false, nil
+	}
+	var task Task
+	err := DB.Where(
+		"user_id = ? AND idempotency_key = ? AND platform = ?",
+		userID,
+		key,
+		constant.TaskPlatformAsyncImage,
+	).First(&task).Error
+	exists, err := RecordExist(err)
+	return &task, exists, err
+}
+
+func DeleteAsyncImageTaskReservation(id int64) error {
+	if id == 0 {
+		return nil
+	}
+	return DB.Where("id = ? AND submission_state = ? AND status = ?", id, TaskSubmissionStateReserved, TaskStatusNotStart).
+		Delete(&Task{}).Error
+}
+
+// UpdateWithSubmissionState finalizes a reservation with a CAS guard so a
+// stale request handler cannot overwrite a recovery transition.
+func (t *Task) UpdateWithSubmissionState(fromState string) (bool, error) {
+	result := DB.Model(t).
+		Where("submission_state = ? AND status = ?", fromState, TaskStatusNotStart).
+		Select("*").Updates(t)
+	if result.Error != nil {
+		return false, result.Error
+	}
+	return result.RowsAffected > 0, nil
 }
 
 type taskSnapshot struct {

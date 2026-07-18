@@ -147,6 +147,7 @@ func buildMultipartBody(c *gin.Context, info *relaycommon.RelayInfo) (io.Reader,
 	if err != nil {
 		return nil, fmt.Errorf("parse multipart request: %w", err)
 	}
+	defer form.RemoveAll()
 
 	var body bytes.Buffer
 	writer := multipart.NewWriter(&body)
@@ -203,7 +204,7 @@ func (a *TaskAdaptor) DoRequest(c *gin.Context, info *relaycommon.RelayInfo, bod
 	return channel.DoTaskApiRequest(a, c, info, body)
 }
 
-func (a *TaskAdaptor) DoResponse(c *gin.Context, resp *http.Response, info *relaycommon.RelayInfo) (string, []byte, *dto.TaskError) {
+func (a *TaskAdaptor) DoResponse(_ *gin.Context, resp *http.Response, info *relaycommon.RelayInfo) (string, []byte, *dto.TaskError) {
 	responseBody, err := io.ReadAll(resp.Body)
 	if err != nil {
 		return "", nil, service.TaskErrorWrapper(err, "read_response_body_failed", http.StatusInternalServerError)
@@ -241,7 +242,6 @@ func (a *TaskAdaptor) DoResponse(c *gin.Context, resp *http.Response, info *rela
 	if err != nil {
 		return "", nil, service.TaskErrorWrapper(err, "marshal_response_failed", http.StatusInternalServerError)
 	}
-	c.Data(http.StatusOK, "application/json", sanitized)
 	return upstreamTaskID, sanitized, nil
 }
 

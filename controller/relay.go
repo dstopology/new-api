@@ -590,29 +590,44 @@ func RelayTask(c *gin.Context) {
 
 	// ── 成功：结算 + 日志 + 插入任务 ──
 	if taskErr == nil {
+		if result == nil {
+			taskErr = service.TaskErrorWrapperLocal(errors.New("empty task submit result"), "empty_task_result", http.StatusInternalServerError)
+		} else if result.Replayed {
+			c.Data(http.StatusOK, "application/json", result.TaskData)
+			return
+		}
+	}
+	if taskErr == nil {
 		if settleErr := service.SettleBilling(c, relayInfo, result.Quota); settleErr != nil {
 			common.SysError("settle task billing error: " + settleErr.Error())
 		}
 		service.LogTaskConsumption(c, relayInfo)
 
-		task := model.InitTask(result.Platform, relayInfo)
-		task.PrivateData.UpstreamTaskID = result.UpstreamTaskID
-		task.PrivateData.BillingSource = relayInfo.BillingSource
-		task.PrivateData.SubscriptionId = relayInfo.SubscriptionId
-		task.PrivateData.TokenId = relayInfo.TokenId
-		task.PrivateData.BillingContext = &model.TaskBillingContext{
-			ModelPrice:      relayInfo.PriceData.ModelPrice,
-			GroupRatio:      relayInfo.PriceData.GroupRatioInfo.GroupRatio,
-			ModelRatio:      relayInfo.PriceData.ModelRatio,
-			OtherRatios:     relayInfo.PriceData.OtherRatios,
-			OriginModelName: relayInfo.OriginModelName,
-			PerCallBilling:  common.StringsContains(constant.TaskPricePatches, relayInfo.OriginModelName) || relayInfo.PriceData.UsePrice,
-		}
-		task.Quota = result.Quota
-		task.Data = result.TaskData
-		task.Action = relayInfo.Action
-		if insertErr := task.Insert(); insertErr != nil {
-			common.SysError("insert task error: " + insertErr.Error())
+		// Async images were reserved and finalized inside RelayTaskSubmit before
+		// any success bytes are written. Other task platforms retain their
+		// established insert path.
+		if result.Platform != constant.TaskPlatformAsyncImage {
+			task := model.InitTask(result.Platform, relayInfo)
+			task.PrivateData.UpstreamTaskID = result.UpstreamTaskID
+			task.PrivateData.BillingSource = relayInfo.BillingSource
+			task.PrivateData.SubscriptionId = relayInfo.SubscriptionId
+			task.PrivateData.TokenId = relayInfo.TokenId
+			task.PrivateData.BillingContext = &model.TaskBillingContext{
+				ModelPrice:      relayInfo.PriceData.ModelPrice,
+				GroupRatio:      relayInfo.PriceData.GroupRatioInfo.GroupRatio,
+				ModelRatio:      relayInfo.PriceData.ModelRatio,
+				OtherRatios:     relayInfo.PriceData.OtherRatios,
+				OriginModelName: relayInfo.OriginModelName,
+				PerCallBilling:  common.StringsContains(constant.TaskPricePatches, relayInfo.OriginModelName) || relayInfo.PriceData.UsePrice,
+			}
+			task.Quota = result.Quota
+			task.Data = result.TaskData
+			task.Action = relayInfo.Action
+			if insertErr := task.Insert(); insertErr != nil {
+				common.SysError("insert task error: " + insertErr.Error())
+			}
+		} else {
+			c.Data(http.StatusOK, "application/json", result.TaskData)
 		}
 	}
 

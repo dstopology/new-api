@@ -1,8 +1,10 @@
 package controller
 
 import (
+	"crypto/sha256"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"strconv"
 	"strings"
@@ -30,6 +32,13 @@ func RelayImage(c *gin.Context) {
 		Relay(c, types.RelayFormatOpenAIImage)
 		return
 	}
+	if err := prepareAsyncImageIdempotency(c); err != nil {
+		asyncImageError(c, http.StatusBadRequest, "invalid_idempotency_key", err.Error())
+		return
+	}
+	if replayAsyncImageIdempotentTask(c) {
+		return
+	}
 	if !constant.UpdateTask {
 		asyncImageError(c, http.StatusServiceUnavailable, "async_task_disabled", "async task polling is disabled")
 		return
@@ -38,12 +47,123 @@ func RelayImage(c *gin.Context) {
 	RelayTask(c)
 }
 
+func prepareAsyncImageIdempotency(c *gin.Context) error {
+	key := strings.TrimSpace(c.GetHeader("Idempotency-Key"))
+	if key == "" {
+		return nil
+	}
+	if len(key) > 128 || strings.IndexFunc(key, func(r rune) bool {
+		return r <= ' ' || r > '~'
+	}) >= 0 {
+		return errors.New("Idempotency-Key must be at most 128 visible ASCII characters")
+	}
+	requestHash, err := asyncImageRequestHash(c)
+	if err != nil {
+		return fmt.Errorf("hash async image request: %w", err)
+	}
+	common.SetContextKey(c, constant.ContextKeyAsyncImageIdempotencyKey, key)
+	common.SetContextKey(c, constant.ContextKeyAsyncImageRequestHash, requestHash)
+	return nil
+}
+
+func asyncImageRequestHash(c *gin.Context) (string, error) {
+	payload := map[string]any{
+		"method": c.Request.Method,
+		"path":   c.Request.URL.Path,
+	}
+	if strings.Contains(c.GetHeader("Content-Type"), "multipart/form-data") {
+		form, err := common.ParseMultipartFormReusable(c)
+		if err != nil {
+			return "", err
+		}
+		defer form.RemoveAll()
+		files := make(map[string][]map[string]any, len(form.File))
+		for field, headers := range form.File {
+			for _, header := range headers {
+				file, err := header.Open()
+				if err != nil {
+					return "", err
+				}
+				hasher := sha256.New()
+				_, copyErr := io.Copy(hasher, file)
+				closeErr := file.Close()
+				if copyErr != nil {
+					return "", copyErr
+				}
+				if closeErr != nil {
+					return "", closeErr
+				}
+				files[field] = append(files[field], map[string]any{
+					"sha256": fmt.Sprintf("%x", hasher.Sum(nil)),
+					"size":   header.Size,
+				})
+			}
+		}
+		payload["values"] = form.Value
+		payload["files"] = files
+	} else {
+		storage, err := common.GetBodyStorage(c)
+		if err != nil {
+			return "", err
+		}
+		body, err := storage.Bytes()
+		if err != nil {
+			return "", err
+		}
+		var decoded any
+		if err := common.Unmarshal(body, &decoded); err != nil {
+			return "", err
+		}
+		payload["body"] = decoded
+	}
+	canonical, err := common.Marshal(payload)
+	if err != nil {
+		return "", err
+	}
+	sum := sha256.Sum256(canonical)
+	return fmt.Sprintf("%x", sum), nil
+}
+
+func replayAsyncImageIdempotentTask(c *gin.Context) bool {
+	key := common.GetContextKeyString(c, constant.ContextKeyAsyncImageIdempotencyKey)
+	if key == "" {
+		return false
+	}
+	task, exists, err := model.GetAsyncImageTaskByIdempotency(c.GetInt("id"), key)
+	if err != nil {
+		asyncImageError(c, http.StatusInternalServerError, "idempotency_query_failed", "failed to query idempotent task")
+		return true
+	}
+	if !exists || task == nil {
+		return false
+	}
+	requestHash := common.GetContextKeyString(c, constant.ContextKeyAsyncImageRequestHash)
+	if task.RequestHash == "" || task.RequestHash != requestHash {
+		asyncImageError(c, http.StatusConflict, "idempotency_conflict", "Idempotency-Key was already used with a different request")
+		return true
+	}
+	response, err := service.BuildAsyncImageTaskResponse(task)
+	if err != nil {
+		asyncImageError(c, http.StatusInternalServerError, "idempotency_replay_failed", "failed to replay idempotent task")
+		return true
+	}
+	body, err := common.Marshal(response)
+	if err != nil {
+		asyncImageError(c, http.StatusInternalServerError, "idempotency_replay_failed", "failed to replay idempotent task")
+		return true
+	}
+	c.Header("Idempotent-Replayed", "true")
+	c.Data(http.StatusOK, "application/json", body)
+	return true
+}
+
 func imageRequestWantsAsync(c *gin.Context) (bool, error) {
 	if strings.Contains(c.GetHeader("Content-Type"), "multipart/form-data") {
 		form, err := common.ParseMultipartFormReusable(c)
 		if err != nil {
 			return false, fmt.Errorf("parse multipart request: %w", err)
 		}
+		defer form.RemoveAll()
 		values := form.Value["async"]
 		if len(values) == 0 || strings.TrimSpace(values[0]) == "" {
 			return false, nil

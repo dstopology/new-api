@@ -2,6 +2,7 @@ package model
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"sync"
 	"testing"
@@ -111,6 +112,160 @@ func TestUnfinishedTaskQueriesSeparateAsyncImages(t *testing.T) {
 	images := GetAllUnfinishedTasksByPlatform(constant.TaskPlatformAsyncImage, 10)
 	require.Len(t, images, 1)
 	require.Equal(t, "task_image", images[0].TaskID)
+}
+
+func TestReserveAsyncImageTaskReplaysUserScopedKey(t *testing.T) {
+	truncateTables(t)
+	key := "job-key-1"
+	first := &Task{
+		TaskID:          "task_first",
+		UserId:          7,
+		Platform:        constant.TaskPlatformAsyncImage,
+		Status:          TaskStatusNotStart,
+		Progress:        "0%",
+		SubmitTime:      time.Now().Unix(),
+		IdempotencyKey:  &key,
+		RequestHash:     "hash-one",
+		SubmissionState: TaskSubmissionStateReserved,
+	}
+	reserved, replayed, err := ReserveAsyncImageTask(first)
+	require.NoError(t, err)
+	require.False(t, replayed)
+	require.NotZero(t, reserved.ID)
+
+	second := &Task{
+		TaskID:          "task_second",
+		UserId:          7,
+		Platform:        constant.TaskPlatformAsyncImage,
+		Status:          TaskStatusNotStart,
+		Progress:        "0%",
+		SubmitTime:      time.Now().Unix(),
+		IdempotencyKey:  &key,
+		RequestHash:     "hash-one",
+		SubmissionState: TaskSubmissionStateReserved,
+	}
+	existing, replayed, err := ReserveAsyncImageTask(second)
+	require.NoError(t, err)
+	require.True(t, replayed)
+	require.Equal(t, reserved.ID, existing.ID)
+	require.Equal(t, "task_first", existing.TaskID)
+}
+
+func TestReserveAsyncImageTaskConcurrentSingleWinner(t *testing.T) {
+	truncateTables(t)
+	const workers = 8
+	ids := make(chan int64, workers)
+	replayed := make(chan bool, workers)
+	errs := make(chan error, workers)
+	var wg sync.WaitGroup
+	for i := 0; i < workers; i++ {
+		wg.Add(1)
+		go func(index int) {
+			defer wg.Done()
+			key := "concurrent-job-key"
+			task, wasReplayed, err := ReserveAsyncImageTask(&Task{
+				TaskID:          fmt.Sprintf("task_concurrent_%d", index),
+				UserId:          9,
+				Platform:        constant.TaskPlatformAsyncImage,
+				Status:          TaskStatusNotStart,
+				Progress:        "0%",
+				SubmitTime:      time.Now().Unix(),
+				IdempotencyKey:  &key,
+				RequestHash:     "same-hash",
+				SubmissionState: TaskSubmissionStateReserved,
+			})
+			if err != nil {
+				errs <- err
+				return
+			}
+			ids <- task.ID
+			replayed <- wasReplayed
+		}(i)
+	}
+	wg.Wait()
+	close(ids)
+	close(replayed)
+	close(errs)
+	for err := range errs {
+		require.NoError(t, err)
+	}
+	var firstID int64
+	for id := range ids {
+		if firstID == 0 {
+			firstID = id
+		}
+		require.Equal(t, firstID, id)
+	}
+	winners := 0
+	for wasReplayed := range replayed {
+		if !wasReplayed {
+			winners++
+		}
+	}
+	require.Equal(t, 1, winners)
+}
+
+func TestReserveAsyncImageTaskAllowsMultipleNilKeys(t *testing.T) {
+	truncateTables(t)
+	for _, taskID := range []string{"task_no_key_1", "task_no_key_2"} {
+		_, replayed, err := ReserveAsyncImageTask(&Task{
+			TaskID:          taskID,
+			UserId:          7,
+			Platform:        constant.TaskPlatformAsyncImage,
+			Status:          TaskStatusNotStart,
+			Progress:        "0%",
+			SubmitTime:      time.Now().Unix(),
+			SubmissionState: TaskSubmissionStateReserved,
+		})
+		require.NoError(t, err)
+		require.False(t, replayed)
+	}
+}
+
+func TestReservedAsyncImageTaskIsNotPolledUntilSubmitted(t *testing.T) {
+	truncateTables(t)
+	reserved := &Task{
+		TaskID:          "task_reserved",
+		UserId:          7,
+		Platform:        constant.TaskPlatformAsyncImage,
+		Status:          TaskStatusNotStart,
+		Progress:        "0%",
+		SubmitTime:      time.Now().Unix(),
+		SubmissionState: TaskSubmissionStateReserved,
+	}
+	insertTask(t, reserved)
+	insertTask(t, &Task{
+		TaskID:          "task_submitted",
+		UserId:          7,
+		Platform:        constant.TaskPlatformAsyncImage,
+		Status:          TaskStatusQueued,
+		Progress:        "20%",
+		SubmitTime:      time.Now().Unix(),
+		SubmissionState: TaskSubmissionStateSubmitted,
+	})
+
+	tasks := GetAllUnfinishedTasksByPlatform(constant.TaskPlatformAsyncImage, 10)
+	require.Len(t, tasks, 1)
+	require.Equal(t, "task_submitted", tasks[0].TaskID)
+}
+
+func TestUpdateWithSubmissionStateRequiresNotStart(t *testing.T) {
+	truncateTables(t)
+	task := &Task{
+		TaskID:          "task_reservation_cas",
+		UserId:          7,
+		Platform:        constant.TaskPlatformAsyncImage,
+		Status:          TaskStatusFailure,
+		Progress:        "100%",
+		SubmitTime:      time.Now().Unix(),
+		SubmissionState: TaskSubmissionStateUnknown,
+	}
+	insertTask(t, task)
+	task.Status = TaskStatusNotStart
+	task.SubmissionState = TaskSubmissionStateSubmitted
+	won, err := task.UpdateWithSubmissionState(TaskSubmissionStateUnknown)
+	require.NoError(t, err)
+	require.False(t, won)
 }
 
 // ---------------------------------------------------------------------------

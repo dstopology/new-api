@@ -130,6 +130,30 @@ func TestAsyncImageResponseDoesNotContainUpstreamURL(t *testing.T) {
 	require.True(t, strings.HasPrefix(response.Data[0].Url, "/v1/images/"))
 }
 
+func TestBuildAsyncImageTaskResponseExposesSubmissionFailureKind(t *testing.T) {
+	for _, test := range []struct {
+		state string
+		code  string
+	}{
+		{state: model.TaskSubmissionStateUnknown, code: "submission_unknown"},
+		{state: model.TaskSubmissionStateRejected, code: "submission_rejected"},
+	} {
+		t.Run(test.state, func(t *testing.T) {
+			response, err := BuildAsyncImageTaskResponse(&model.Task{
+				TaskID:          "task_failure",
+				Platform:        constant.TaskPlatformAsyncImage,
+				Status:          model.TaskStatusFailure,
+				Progress:        "100%",
+				FailReason:      "submission failed",
+				SubmissionState: test.state,
+			})
+			require.NoError(t, err)
+			require.NotNil(t, response.Error)
+			require.Equal(t, test.code, response.Error.Code)
+		})
+	}
+}
+
 type fakeAsyncImagePollingAdaptor struct {
 	imageBase64 string
 }

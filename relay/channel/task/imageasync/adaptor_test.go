@@ -76,7 +76,7 @@ func TestDoResponseHidesUpstreamTaskID(t *testing.T) {
 	require.Nil(t, taskErr)
 	require.Equal(t, "upstream-secret-id", upstreamID)
 	require.NotContains(t, string(taskData), "upstream-secret-id")
-	require.NotContains(t, recorder.Body.String(), "upstream-secret-id")
+	require.Empty(t, recorder.Body.String(), "controller writes only after the task is durable")
 
 	var response dto.AsyncImageTaskResponse
 	require.NoError(t, common.Unmarshal(taskData, &response))
