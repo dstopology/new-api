@@ -96,7 +96,7 @@ func updateVideoSingleTask(ctx context.Context, adaptor channel.TaskAdaptor, cha
 		return fmt.Errorf("readAll failed for task %s: %w", taskId, err)
 	}
 
-	logger.LogDebug(ctx, "UpdateVideoSingleTask response: %s", responseBody)
+	logger.LogDebug(ctx, "UpdateVideoSingleTask response: status=%d bytes=%d", resp.StatusCode, len(responseBody))
 
 	taskResult := &relaycommon.TaskInfo{}
 	// try parse as New API response format

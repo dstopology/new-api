@@ -3,6 +3,7 @@ package controller
 import (
 	"context"
 	"encoding/base64"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -59,6 +60,10 @@ func VideoProxy(c *gin.Context) {
 	if err != nil {
 		logger.LogError(c.Request.Context(), fmt.Sprintf("Failed to get channel for task %s: %s", taskID, err.Error()))
 		videoProxyError(c, http.StatusInternalServerError, "server_error", "Failed to retrieve channel information")
+		return
+	}
+	if service.UsesLocalOpenAIVideoAssets(channel.Type) {
+		serveLocalVideoAsset(c, task)
 		return
 	}
 	baseURL := channel.GetBaseURL()
@@ -169,6 +174,36 @@ func VideoProxy(c *gin.Context) {
 	if _, err = io.Copy(c.Writer, resp.Body); err != nil {
 		logger.LogError(c.Request.Context(), fmt.Sprintf("Failed to stream video content: %s", err.Error()))
 	}
+}
+
+func serveLocalVideoAsset(c *gin.Context, task *model.Task) {
+	media, file, err := service.OpenTemporaryMediaByTaskPosition(c.GetInt("id"), task.TaskID, 0)
+	if err != nil {
+		switch {
+		case errors.Is(err, service.ErrTemporaryMediaExpired):
+			videoAssetError(c, http.StatusGone, "output_expired", "temporary video has expired")
+		case errors.Is(err, service.ErrTemporaryMediaNotFound):
+			videoAssetError(c, http.StatusNotFound, "output_not_found", "temporary video not found")
+		default:
+			videoAssetError(c, http.StatusInternalServerError, "output_read_failed", "failed to read temporary video")
+		}
+		return
+	}
+	defer file.Close()
+	stat, err := file.Stat()
+	if err != nil {
+		videoAssetError(c, http.StatusInternalServerError, "output_read_failed", "failed to read temporary video")
+		return
+	}
+	c.Header("Content-Type", media.ContentType)
+	c.Header("Content-Disposition", "inline")
+	c.Header("Cache-Control", "private, no-store")
+	c.Header("X-Content-Type-Options", "nosniff")
+	http.ServeContent(c.Writer, c.Request, media.MediaID, stat.ModTime(), file)
+}
+
+func videoAssetError(c *gin.Context, status int, code, message string) {
+	c.JSON(status, gin.H{"error": gin.H{"code": code, "message": message, "type": "new_api_error"}})
 }
 
 func writeVideoDataURL(c *gin.Context, dataURL string) error {

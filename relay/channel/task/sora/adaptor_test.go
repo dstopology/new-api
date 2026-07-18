@@ -1,7 +1,10 @@
 package sora
 
 import (
+	"io"
+	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
@@ -50,4 +53,42 @@ func TestEstimateBillingUsesVideoDuration(t *testing.T) {
 			require.InDelta(t, test.wantSize, ratios["size"], 1e-9)
 		})
 	}
+}
+
+func TestDoResponseStoresOnlyPublicTaskData(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	recorder := httptest.NewRecorder()
+	context, _ := gin.CreateTestContext(recorder)
+	response := &http.Response{
+		StatusCode: http.StatusOK,
+		Body: io.NopCloser(strings.NewReader(`{
+			"id":"upstream-private-id",
+			"task_id":"upstream-private-id",
+			"object":"video.generation",
+			"model":"veo-3-1-fast",
+			"status":"running",
+			"progress":1,
+			"video_url":"https://upstream.example/private.mp4",
+			"metadata":{"url":"https://upstream.example/private.mp4"}
+		}`)),
+	}
+	info := &relaycommon.RelayInfo{TaskRelayInfo: &relaycommon.TaskRelayInfo{PublicTaskID: "task_public"}}
+
+	upstreamID, taskData, taskErr := (&TaskAdaptor{}).DoResponse(context, response, info)
+
+	require.Nil(t, taskErr)
+	require.Equal(t, "upstream-private-id", upstreamID)
+	require.Contains(t, string(taskData), `"id":"task_public"`)
+	require.Contains(t, string(taskData), `"task_id":"task_public"`)
+	require.Contains(t, string(taskData), `"status":"in_progress"`)
+	require.NotContains(t, string(taskData), "upstream-private-id")
+	require.NotContains(t, string(taskData), "upstream.example")
+	require.Equal(t, string(taskData), recorder.Body.String())
+}
+
+func TestParseTaskResultTreatsRunningAsInProgress(t *testing.T) {
+	result, err := (&TaskAdaptor{}).ParseTaskResult([]byte(`{"status":"running","progress":12}`))
+	require.NoError(t, err)
+	require.Equal(t, "IN_PROGRESS", result.Status)
+	require.Equal(t, "12%", result.Progress)
 }

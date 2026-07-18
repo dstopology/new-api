@@ -101,7 +101,7 @@ export function getEndpointTypeLabels(
     [ENDPOINT_TYPES.JINA_RERANK]: 'Rerank',
     [ENDPOINT_TYPES.IMAGE_GENERATION]: t('Image'),
     [ENDPOINT_TYPES.EMBEDDINGS]: t('Embeddings'),
-    [ENDPOINT_TYPES.OPENAI_VIDEO]: t('Video'),
+    [ENDPOINT_TYPES.OPENAI_VIDEO]: 'OpenAI Video',
   }
 }
 

@@ -23,6 +23,7 @@ type OpenAIVideo struct {
 	CreatedAt          int64             `json:"created_at"`
 	CompletedAt        int64             `json:"completed_at,omitempty"`
 	ExpiresAt          int64             `json:"expires_at,omitempty"`
+	VideoURL           string            `json:"video_url,omitempty"`
 	Seconds            string            `json:"seconds,omitempty"`
 	Size               string            `json:"size,omitempty"`
 	RemixedFromVideoID string            `json:"remixed_from_video_id,omitempty"`

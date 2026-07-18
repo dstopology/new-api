@@ -492,7 +492,7 @@ func updateVideoSingleTask(ctx context.Context, adaptor TaskPollingAdaptor, ch *
 		return fmt.Errorf("readAll failed for task %s: %w", taskId, err)
 	}
 
-	logger.LogDebug(ctx, "updateVideoSingleTask response: %s", responseBody)
+	logger.LogDebug(ctx, "updateVideoSingleTask response: status=%d bytes=%d", resp.StatusCode, len(responseBody))
 
 	snap := task.Snapshot()
 
@@ -515,6 +515,10 @@ func updateVideoSingleTask(ctx context.Context, adaptor TaskPollingAdaptor, ch *
 	if taskResult.Status == string(model.TaskStatusSuccess) && task.Platform == constant.TaskPlatformAsyncImage {
 		if err := PersistAsyncImageTaskResult(ctx, ch, task, taskResult); err != nil {
 			return fmt.Errorf("persist async image result for task %s: %w", task.TaskID, err)
+		}
+	} else if taskResult.Status == string(model.TaskStatusSuccess) && UsesLocalOpenAIVideoAssets(ch.Type) {
+		if err := PersistOpenAIVideoTaskResult(ctx, ch, task); err != nil {
+			return fmt.Errorf("persist completed video for task %s: %w", task.TaskID, err)
 		}
 	}
 
@@ -569,7 +573,9 @@ func updateVideoSingleTask(ctx context.Context, adaptor TaskPollingAdaptor, ch *
 		if task.FinishTime == 0 {
 			task.FinishTime = now
 		}
-		if strings.HasPrefix(taskResult.Url, "data:") {
+		if task.Platform != constant.TaskPlatformAsyncImage && UsesLocalOpenAIVideoAssets(ch.Type) {
+			task.PrivateData.ResultURL = temporaryVideoContentURL(task.TaskID)
+		} else if strings.HasPrefix(taskResult.Url, "data:") {
 			// data: URI (e.g. Vertex base64 encoded video) — keep in Data, not in ResultURL
 			task.PrivateData.ResultURL = taskcommon.BuildProxyURL(task.TaskID)
 		} else if taskResult.Url != "" {
@@ -598,6 +604,13 @@ func updateVideoSingleTask(ctx context.Context, adaptor TaskPollingAdaptor, ch *
 	}
 	if taskResult.Progress != "" {
 		task.Progress = taskResult.Progress
+	}
+	if task.Platform != constant.TaskPlatformAsyncImage && UsesLocalOpenAIVideoAssets(ch.Type) {
+		responseData, err := BuildOpenAIVideoTaskResponseData(task)
+		if err != nil {
+			return fmt.Errorf("build local video response for task %s: %w", task.TaskID, err)
+		}
+		task.Data = responseData
 	}
 
 	isDone := task.Status == model.TaskStatusSuccess || task.Status == model.TaskStatusFailure

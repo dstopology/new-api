@@ -1,6 +1,6 @@
-# FrostFox 异步 Cook 接入协议 v1
+# FrostFox 异步图片与视频 Cook 接入协议 v1
 
-本文档定义 FrostFox/FrostFoxNoder 接入 new-api 异步图片任务的稳定边界。协议目标是让 Graph 中的远程生成节点具备可恢复、可轮询、可取货、可持久化的正式异步 Cook 能力。
+本文档定义 FrostFox/FrostFoxNoder 接入 new-api 异步图片与视频任务的稳定边界。协议目标是让 Graph 中的远程生成节点具备可恢复、可轮询、可取货、可持久化的正式异步 Cook 能力。
 
 本文中的 `MUST` 表示必须实现，`SHOULD` 表示建议实现。时间字段均为 Unix 秒；所有平台 ID 建议使用 UUIDv7 或 ULID。
 
@@ -151,9 +151,9 @@ NEW_API_TOKEN=<用户保存的 Key>
 
 每个 FrostFox Job 在创建时生成一个永久不变的 `provider_idempotency_key`。该值必须先入库，再提交 new-api。
 
-new-api 会在调用上游前按“用户 + `Idempotency-Key`”创建唯一 Task reservation，并在上游任务 ID 和公开响应持久化后才返回 HTTP `200`。相同 Key 与相同语义请求会回放已有任务，不会再次请求上游或重复计费；相同 Key 与不同请求返回 HTTP `409 idempotency_conflict`。
+异步图片端点会在调用上游前按“用户 + `Idempotency-Key`”创建唯一 Task reservation，并在上游任务 ID 和公开响应持久化后才返回 HTTP `200`。相同 Key 与相同语义请求会回放已有任务，不会再次请求上游或重复计费；相同 Key 与不同请求返回 HTTP `409 idempotency_conflict`。
 
-因此 FrostFox 可以在连接断开、超时或 `5xx` 后使用完全相同的 `provider_idempotency_key` 和请求体重试 POST。禁止为重试生成新 Key。
+因此图片 Job 可以在连接断开、超时或 `5xx` 后使用完全相同的 `provider_idempotency_key` 和请求体重试 POST。禁止为重试生成新 Key。视频端点当前不提供本地提交幂等，必须遵守 3.5 和 5.1.2 的单次提交规则。
 
 ### 3.1 文生图提交
 
@@ -345,6 +345,85 @@ Content-Type: application/json
 
 此时 FrostFox 必须迁移为 `expired`，不能重新提交生成请求。
 
+### 3.5 视频提交、查询与取货
+
+第一阶段文本生成视频使用：
+
+```http
+POST {NEW_API_BASE_URL}/v1/videos
+Authorization: Bearer {NEW_API_TOKEN}
+Idempotency-Key: {provider_idempotency_key}
+Content-Type: application/json
+Accept: application/json
+```
+
+```json
+{
+  "model": "veo-3-1-fast",
+  "prompt": "A red paper square slowly rotates on a white background"
+}
+```
+
+`Idempotency-Key` 仍应发送并持久化，便于后续协议升级，但当前视频 POST 不保证按该 Header 去重。Worker 对每个 Job 只能主动提交一次；POST 出现断线、超时或无法判断的 `5xx` 时必须进入 `submission_unknown`，禁止自动再次 POST。
+
+成功响应为 HTTP `200`。FrostFox 只把 `id` 当作 provider task ID；`task_id` 是兼容字段，值必须与 `id` 相同，不能作为另一套 ID 使用：
+
+```json
+{
+  "id": "task_xxx",
+  "task_id": "task_xxx",
+  "object": "video",
+  "model": "veo-3-1-fast",
+  "status": "in_progress",
+  "progress": 1,
+  "created_at": 1784317602
+}
+```
+
+查询：
+
+```http
+GET {NEW_API_BASE_URL}/v1/videos/{task_id}
+Authorization: Bearer {NEW_API_TOKEN}
+Accept: application/json
+```
+
+new-api 只有在上游视频已经完成、文件已下载并校验、且本地临时资产元数据已提交后才返回 `completed`。完成响应中的所有 URL 都必须指向 new-api 本地鉴权端点，不会返回上游 task ID 或上游临时 URL：
+
+```json
+{
+  "id": "task_xxx",
+  "task_id": "task_xxx",
+  "object": "video",
+  "model": "veo-3-1-fast",
+  "status": "completed",
+  "progress": 100,
+  "created_at": 1784317602,
+  "completed_at": 1784317724,
+  "expires_at": 1784318024,
+  "video_url": "https://<new-api-host>/v1/videos/task_xxx/content",
+  "metadata": {
+    "url": "https://<new-api-host>/v1/videos/task_xxx/content",
+    "asset_id": "media_xxx",
+    "content_type": "video/mp4",
+    "size": 10117503,
+    "sha256": "<hex>"
+  }
+}
+```
+
+FrostFox 收到 `completed` 后立即请求 `video_url`：
+
+```http
+GET {video_url}
+Authorization: Bearer {NEW_API_TOKEN}
+Accept: video/*
+```
+
+该请求读取 new-api 本地临时资产并支持标准 HTTP Range。FrostFox 必须流式写入自己的持久存储、验证视频类型与大小、计算或核对 SHA-256，并创建 `kind: "video"` 的 FrostFox Asset。只有 FrostFox Asset 提交成功后，Job 才能从 `fetching` 进入 `ready`。不得把 new-api 临时 URL 或用户 Token交给浏览器播放器。
+
+本地视频默认保留 300 秒。过期后查询保持 `status: "completed"`，但 `video_url` 为空且 `metadata.output_expired` 为 `true`；下载返回 `410 output_expired`。FrostFox 必须进入 `expired`，不能重新生成。
+
 ## 4. FrostFox 状态机
 
 ```text
@@ -383,11 +462,13 @@ created/queued/generating
 
 同一 Job 同一时间只能被一个 Worker 处理。建议使用带超时的数据库租约：`lease_owner`、`lease_expires_at`。Worker 崩溃后，除 `submitting` 外的非终态可以在租约过期后由其他 Worker 接管。
 
-对于停留在 `submitting` 且租约过期、又没有 `provider_task_id` 的 Job，可以由新 Worker 使用原 `provider_idempotency_key` 重新执行同一 POST。new-api 将返回原任务或稳定失败状态，不会创建第二个上游任务。
+对于停留在 `submitting` 且租约过期、又没有 `provider_task_id` 的图片 Job，可以由新 Worker 使用原 `provider_idempotency_key` 重新执行同一 POST。new-api 将返回原任务或稳定失败状态，不会创建第二个上游任务。视频 Job 遇到同一场景必须进入 `submission_unknown`，直到 new-api 提供视频提交幂等。
 
 ## 5. 重试协议
 
 ### 5.1 提交 POST
+
+#### 5.1.1 异步图片
 
 一次 FrostFox Job 可以因传输故障多次调用 new-api POST，但所有尝试必须使用完全相同的 `provider_idempotency_key` 和规范化请求。new-api 对上游最多提交一次。
 
@@ -402,6 +483,21 @@ created/queued/generating
 | 回放得到 `status: failed`、`error.code: submission_unknown` | `submission_unknown`，禁止使用新 Key 自动生成 |
 
 提交重试使用指数退避并设置平台级截止时间。相同 Key 的回放响应会带 `Idempotent-Replayed: true`；FrostFox 不需要依赖该响应头判断正确性，只需按返回的任务状态继续处理。
+
+#### 5.1.2 异步视频
+
+视频 Job 当前只允许一次主动 POST。`Idempotency-Key` 必须保持稳定并发送，但不能据此自动重试。
+
+| 结果 | FrostFox 行为 |
+| --- | --- |
+| 合法 `200` 且有公开 `id` | 保存 `id`，继续查询 |
+| 明确 `400/401/403/404/409/422/429` | `failed`，不自动重提 |
+| 连接断开、超时、DNS/TLS 异常 | `submission_unknown`，禁止自动重提 |
+| 任意无法确定是否已受理的 `5xx` | `submission_unknown`，禁止自动重提 |
+| `2xx` 但响应无法解析或缺少公开 `id` | `submission_unknown`，禁止自动重提 |
+| Worker 在提交期间崩溃且没有保存公开 `id` | `submission_unknown`，禁止自动重提 |
+
+视频提交幂等在 new-api 落地后，可以把本节升级为与图片相同的“相同 Key 安全重试”；FrostFox 的数据库字段和接口不需要因此改变。
 
 ### 5.2 查询 GET
 
@@ -446,7 +542,7 @@ request_hash
 client_idempotency_key
 provider_idempotency_key
 provider_kind              // new_api
-provider_action            // image.generations | image.edits
+provider_action            // image.generations | image.edits | video.generations
 provider_task_id           // task_xxx，内部字段
 provider_created_at
 output_expires_at
@@ -484,6 +580,9 @@ content_type
 size
 sha256
 revised_prompt
+duration_ms               // 视频可选，由 FrostFox 探测
+width                     // 图片/视频可选
+height                    // 图片/视频可选
 created_at
 updated_at
 ```
@@ -494,7 +593,7 @@ updated_at
 UNIQUE(job_id, position)
 ```
 
-多图任务必须允许逐个输出重试，但只有所有位置均为 `stored` 时 Job 才能进入 `ready`。部分下载成功、部分过期时，Job 仍为 `expired`；未交付的临时对象应由 FrostFox 清理任务回收。
+多输出任务必须允许逐个输出重试，但只有所有位置均为 `stored` 时 Job 才能进入 `ready`。部分下载成功、部分过期时，Job 仍为 `expired`；未交付的临时对象应由 FrostFox 清理任务回收。视频第一阶段固定一个 position 0 输出，但仍使用同一张输出表。
 
 ## 7. Graph/Cook 集成约束
 
@@ -535,27 +634,31 @@ FrostFox 对浏览器只暴露稳定的平台错误码，不原样透传可能�
 | `output_expired` | 未在 5 分钟窗口内取货 | 否，禁止自动重提 |
 | `invalid_output` | 返回内容类型、大小或文件校验失败 | 否，需排查 |
 
-日志中可以记录 FrostFox `job_id`、new-api `task_id`、HTTP 状态码、耗时、重试次数和错误码；不得记录 Authorization、用户 Key、原始图片二进制或完整敏感 Prompt。
+日志中可以记录 FrostFox `job_id`、new-api `task_id`、HTTP 状态码、耗时、重试次数和错误码；不得记录 Authorization、用户 Key、原始媒体二进制或完整敏感 Prompt。
 
 ## 9. 第一阶段验收标准
 
 FrostFoxNoder 第一阶段完成以下用例即可开始联调：
 
 1. 同一浏览器 `Idempotency-Key` 重放不会创建第二个 FrostFox Job。
-2. 同一生成 Job 的全部 new-api POST 都使用同一 Key，且只产生一个公开任务和一次上游提交。
+2. 同一图片生成 Job 的全部 new-api POST 都使用同一 Key，且只产生一个公开任务和一次上游提交。
 3. 收到 `task_xxx` 后，进程重启仍能继续查询。
 4. 查询网络错误不会触发第二次 POST。
 5. `completed` 后能使用同一用户 Token 下载并生成 FrostFox Asset。
 6. 多图任务只有全部输出保存成功才进入 `ready`。
 7. new-api 下载返回 `410` 时 Job 进入 `expired`。
 8. Worker 在 `queued`、`generating`、`fetching` 阶段崩溃后可由租约恢复。
-9. Worker 在 `submitting` 阶段崩溃后能以同一 Key 恢复；网关明确返回 `submission_unknown` 时停止自动生成。
+9. 图片 Worker 在 `submitting` 阶段崩溃后能以同一 Key 恢复；网关明确返回 `submission_unknown` 时停止自动生成。
 10. 浏览器刷新后能通过 FrostFox Job ID 恢复进度与最终 Asset。
+11. 视频查询只保存公开 `id`，完成响应和日志中不出现上游 task ID 或上游临时 URL。
+12. 视频只有在 new-api 本地资产落盘后才出现 `completed`，FrostFox 能从鉴权 `/content` 下载并创建 `kind: video` Asset。
+13. 视频 POST 结果不确定时进入 `submission_unknown`，不会自动发出第二次 POST。
 
 ## 10. 当前部署约束
 
-- new-api 临时图片默认保留 300 秒。
+- new-api 临时图片和 Sora/OpenAI 视频默认保留 300 秒。
 - new-api 查询和下载需要创建任务时同一用户的 Bearer Token。
 - new-api 查询和下载不占用个人模型生成 RPM；提交仍正常计费和限流。
 - new-api 当前应保持单实例运行，或让多个实例共享 `ASYNC_MEDIA_DIR`。
-- new-api 已实现本地 `Idempotency-Key` 去重与先落库后返回；FrostFox 正式计费请求必须始终发送该 Header。
+- new-api 异步图片已实现本地 `Idempotency-Key` 去重与先落库后返回；视频暂未实现提交幂等，必须使用单次 POST 与 `submission_unknown` 规则。
+- Sora/OpenAI 视频默认最大 512 MiB，可通过 `ASYNC_VIDEO_MAX_FILE_MB` 调整；上游取货超时默认 300 秒，可通过 `ASYNC_VIDEO_DOWNLOAD_TIMEOUT_SECONDS` 调整。

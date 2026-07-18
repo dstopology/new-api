@@ -43,6 +43,14 @@ func GetTemporaryMediaForUser(userID int, taskID, mediaID string) (*TemporaryMed
 	return &media, exists, err
 }
 
+func GetTemporaryMediaByTaskPositionForUser(userID int, taskID string, position int) (*TemporaryMedia, bool, error) {
+	var media TemporaryMedia
+	err := DB.Where("user_id = ? AND task_id = ? AND position = ?", userID, taskID, position).
+		First(&media).Error
+	exists, err := RecordExist(err)
+	return &media, exists, err
+}
+
 func GetTemporaryMediaByTask(taskID string) ([]*TemporaryMedia, error) {
 	var media []*TemporaryMedia
 	err := DB.Where("task_id = ?", taskID).Order("position").Find(&media).Error

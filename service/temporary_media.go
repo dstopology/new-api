@@ -30,6 +30,8 @@ const (
 	defaultAsyncMediaMaxFileMB        = 64
 	defaultAsyncMediaDownloadTimeout  = 90
 	defaultAsyncMediaMetadataHours    = 24
+	defaultAsyncVideoMaxFileMB        = 512
+	defaultAsyncVideoDownloadTimeout  = 300
 )
 
 var (
@@ -71,6 +73,14 @@ func asyncMediaMaxBytes() int64 {
 	megabytes := common.GetEnvOrDefault("ASYNC_MEDIA_MAX_FILE_MB", defaultAsyncMediaMaxFileMB)
 	if megabytes <= 0 {
 		megabytes = defaultAsyncMediaMaxFileMB
+	}
+	return int64(megabytes) * 1024 * 1024
+}
+
+func asyncVideoMaxBytes() int64 {
+	megabytes := common.GetEnvOrDefault("ASYNC_VIDEO_MAX_FILE_MB", defaultAsyncVideoMaxFileMB)
+	if megabytes <= 0 {
+		megabytes = defaultAsyncVideoMaxFileMB
 	}
 	return int64(megabytes) * 1024 * 1024
 }
@@ -305,7 +315,45 @@ func resolveAsyncImageURL(channel *model.Channel, imageURL string) (string, bool
 }
 
 func writeTemporaryMediaFile(root, mediaID string, reader io.Reader, declaredContentType string) (_ *temporaryMediaFile, retErr error) {
-	temporary, err := os.CreateTemp(root, ".async-image-*.part")
+	return writeTemporaryMediaFileWithOptions(
+		root,
+		mediaID,
+		reader,
+		declaredContentType,
+		".async-image-*.part",
+		"image",
+		asyncMediaMaxBytes(),
+		normalizeImageContentType,
+		imageExtension,
+	)
+}
+
+func writeTemporaryVideoFile(root, mediaID string, reader io.Reader, declaredContentType string) (*temporaryMediaFile, error) {
+	return writeTemporaryMediaFileWithOptions(
+		root,
+		mediaID,
+		reader,
+		declaredContentType,
+		".async-video-*.part",
+		"video",
+		asyncVideoMaxBytes(),
+		normalizeVideoContentType,
+		videoExtension,
+	)
+}
+
+func writeTemporaryMediaFileWithOptions(
+	root string,
+	mediaID string,
+	reader io.Reader,
+	declaredContentType string,
+	temporaryPattern string,
+	mediaKind string,
+	maxBytes int64,
+	normalizeContentType func(string, string) string,
+	extension func(string) string,
+) (_ *temporaryMediaFile, retErr error) {
+	temporary, err := os.CreateTemp(root, temporaryPattern)
 	if err != nil {
 		return nil, err
 	}
@@ -318,16 +366,15 @@ func writeTemporaryMediaFile(root, mediaID string, reader io.Reader, declaredCon
 	}()
 
 	hash := sha256.New()
-	maxBytes := asyncMediaMaxBytes()
 	written, err := io.Copy(io.MultiWriter(temporary, hash), io.LimitReader(reader, maxBytes+1))
 	if err != nil {
 		return nil, err
 	}
 	if written == 0 {
-		return nil, errors.New("image is empty")
+		return nil, fmt.Errorf("%s is empty", mediaKind)
 	}
 	if written > maxBytes {
-		return nil, fmt.Errorf("image exceeds %d bytes", maxBytes)
+		return nil, fmt.Errorf("%s exceeds %d bytes", mediaKind, maxBytes)
 	}
 	if err := temporary.Sync(); err != nil {
 		return nil, err
@@ -338,15 +385,15 @@ func writeTemporaryMediaFile(root, mediaID string, reader io.Reader, declaredCon
 	header := make([]byte, 512)
 	headerLength, _ := io.ReadFull(temporary, header)
 	sniffedContentType := http.DetectContentType(header[:headerLength])
-	contentType := normalizeImageContentType(declaredContentType, sniffedContentType)
+	contentType := normalizeContentType(declaredContentType, sniffedContentType)
 	if contentType == "" {
-		return nil, fmt.Errorf("unsupported image content type %q", declaredContentType)
+		return nil, fmt.Errorf("unsupported %s content type %q", mediaKind, declaredContentType)
 	}
 	if err := temporary.Close(); err != nil {
 		return nil, err
 	}
 
-	fileName := mediaID + imageExtension(contentType)
+	fileName := mediaID + extension(contentType)
 	finalPath := filepath.Join(root, fileName)
 	if err := os.Rename(temporaryName, finalPath); err != nil {
 		return nil, err
@@ -388,6 +435,36 @@ func imageExtension(contentType string) string {
 		return ".avif"
 	default:
 		return ".png"
+	}
+}
+
+func normalizeVideoContentType(declared, sniffed string) string {
+	if parsed, _, err := mime.ParseMediaType(declared); err == nil {
+		declared = strings.ToLower(parsed)
+	} else {
+		declared = ""
+	}
+	if strings.HasPrefix(strings.ToLower(sniffed), "video/") {
+		return strings.ToLower(sniffed)
+	}
+	switch declared {
+	case "video/mp4", "video/webm", "video/quicktime", "video/x-matroska":
+		return declared
+	default:
+		return ""
+	}
+}
+
+func videoExtension(contentType string) string {
+	switch contentType {
+	case "video/webm":
+		return ".webm"
+	case "video/quicktime":
+		return ".mov"
+	case "video/x-matroska":
+		return ".mkv"
+	default:
+		return ".mp4"
 	}
 }
 
@@ -508,6 +585,18 @@ func OpenTemporaryMedia(userID int, taskID, mediaID string) (*model.TemporaryMed
 	if err != nil {
 		return nil, nil, err
 	}
+	return openTemporaryMediaRecord(media, exists)
+}
+
+func OpenTemporaryMediaByTaskPosition(userID int, taskID string, position int) (*model.TemporaryMedia, *os.File, error) {
+	media, exists, err := model.GetTemporaryMediaByTaskPositionForUser(userID, taskID, position)
+	if err != nil {
+		return nil, nil, err
+	}
+	return openTemporaryMediaRecord(media, exists)
+}
+
+func openTemporaryMediaRecord(media *model.TemporaryMedia, exists bool) (*model.TemporaryMedia, *os.File, error) {
 	if !exists || media == nil {
 		return nil, nil, ErrTemporaryMediaNotFound
 	}

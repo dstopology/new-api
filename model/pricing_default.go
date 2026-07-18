@@ -8,11 +8,13 @@ import (
 var defaultVendorRules = map[string]string{
 	"gpt":      "OpenAI",
 	"dall-e":   "OpenAI",
+	"sora":     "OpenAI",
 	"whisper":  "OpenAI",
 	"o1":       "OpenAI",
 	"o3":       "OpenAI",
 	"claude":   "Anthropic",
 	"gemini":   "Google",
+	"veo":      "Google",
 	"moonshot": "Moonshot",
 	"kimi":     "Moonshot",
 	"chatglm":  "智谱",
@@ -71,18 +73,20 @@ var defaultVendorIcons = map[string]string{
 func initDefaultVendorMapping(metaMap map[string]*Model, vendorMap map[int]*Vendor, enableAbilities []AbilityWithChannel) {
 	for _, ability := range enableAbilities {
 		modelName := ability.Model
-		if _, exists := metaMap[modelName]; exists {
+		vendorName := getDefaultVendorName(modelName)
+		if meta, exists := metaMap[modelName]; exists {
+			// Exact model rows may have been auto-created before a vendor rule
+			// existed. Fill the response-time default without overwriting an
+			// explicit vendor selected by an administrator.
+			if meta.NameRule == NameRuleExact && meta.VendorID == 0 && vendorName != "" {
+				meta.VendorID = getOrCreateVendor(vendorName, vendorMap)
+			}
 			continue
 		}
 
-		// 匹配供应商
 		vendorID := 0
-		modelLower := strings.ToLower(modelName)
-		for pattern, vendorName := range defaultVendorRules {
-			if strings.Contains(modelLower, pattern) {
-				vendorID = getOrCreateVendor(vendorName, vendorMap)
-				break
-			}
+		if vendorName != "" {
+			vendorID = getOrCreateVendor(vendorName, vendorMap)
 		}
 
 		// 创建模型元数据
@@ -93,6 +97,16 @@ func initDefaultVendorMapping(metaMap map[string]*Model, vendorMap map[int]*Vend
 			NameRule:  NameRuleExact,
 		}
 	}
+}
+
+func getDefaultVendorName(modelName string) string {
+	modelLower := strings.ToLower(modelName)
+	for pattern, vendorName := range defaultVendorRules {
+		if strings.Contains(modelLower, pattern) {
+			return vendorName
+		}
+	}
+	return ""
 }
 
 // 查找或创建供应商

@@ -583,6 +583,37 @@
                 }
               },
               "examples": {}
+            },
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "model",
+                  "prompt"
+                ],
+                "properties": {
+                  "model": {
+                    "description": "模型名称",
+                    "example": "veo-3-1-fast",
+                    "type": "string"
+                  },
+                  "prompt": {
+                    "description": "提示词",
+                    "example": "A red paper square slowly rotates on a white background",
+                    "type": "string"
+                  },
+                  "seconds": {
+                    "description": "生成秒数（模型支持时）",
+                    "example": "8",
+                    "type": "string"
+                  },
+                  "size": {
+                    "description": "视频尺寸（模型支持时）",
+                    "example": "1280x720",
+                    "type": "string"
+                  }
+                }
+              }
             }
           }
         },
@@ -4381,7 +4412,12 @@
           },
           "expires_at": {
             "type": "integer",
-            "description": "过期时间戳"
+            "description": "new-api 本地临时资产过期时间戳"
+          },
+          "video_url": {
+            "type": "string",
+            "description": "需要相同用户 Bearer Token 的 new-api 本地临时视频地址",
+            "example": "https://example.com/v1/videos/task_xxx/content"
           },
           "seconds": {
             "type": "string",
