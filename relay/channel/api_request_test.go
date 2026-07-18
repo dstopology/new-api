@@ -4,11 +4,28 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/require"
 )
+
+func TestStartPingKeepAliveStopsBeforeReturning(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	recorder := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(recorder)
+	ctx.Request = httptest.NewRequest(http.MethodPost, "/v1/images/generations", nil)
+
+	stop := startPingKeepAlive(ctx, time.Millisecond)
+	time.Sleep(10 * time.Millisecond)
+	stop()
+
+	written := recorder.Body.Len()
+	require.Positive(t, written)
+	time.Sleep(5 * time.Millisecond)
+	require.Equal(t, written, recorder.Body.Len(), "no ping may race with the final stream event after stop returns")
+}
 
 func TestProcessHeaderOverride_ChannelTestSkipsPassthroughRules(t *testing.T) {
 	t.Parallel()

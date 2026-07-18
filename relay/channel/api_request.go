@@ -396,11 +396,13 @@ func DoWssRequest(a Adaptor, c *gin.Context, info *common.RelayInfo, requestBody
 	return targetConn, nil
 }
 
-func startPingKeepAlive(c *gin.Context, pingInterval time.Duration) context.CancelFunc {
+func startPingKeepAlive(c *gin.Context, pingInterval time.Duration) func() {
 	pingerCtx, stopPinger := context.WithCancel(context.Background())
+	done := make(chan struct{})
 
 	gopool.Go(func() {
 		defer func() {
+			close(done)
 			// 增加panic恢复处理
 			if r := recover(); r != nil {
 				logger.LogDebug(c, "SSE ping goroutine panic recovered: %v", r)
@@ -449,7 +451,14 @@ func startPingKeepAlive(c *gin.Context, pingInterval time.Duration) context.Canc
 		}
 	})
 
-	return stopPinger
+	return func() {
+		stopPinger()
+		select {
+		case <-done:
+		case <-time.After(5 * time.Second):
+			logger.LogDebug(c, "timeout waiting for SSE ping goroutine to stop")
+		}
+	}
 }
 
 func sendPingData(c *gin.Context, mutex *sync.Mutex) error {
@@ -496,7 +505,7 @@ func doRequest(c *gin.Context, req *http.Request, info *common.RelayInfo) (*http
 		client = service.GetHttpClient()
 	}
 
-	var stopPinger context.CancelFunc
+	var stopPinger func()
 	if info.IsStream {
 		helper.SetEventStreamHeaders(c)
 		// 处理流式请求的 ping 保活

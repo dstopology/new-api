@@ -14,6 +14,7 @@ import (
 	"github.com/QuantumNous/new-api/dto"
 	"github.com/QuantumNous/new-api/model"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
+	relayconstant "github.com/QuantumNous/new-api/relay/constant"
 	"github.com/QuantumNous/new-api/service"
 
 	"github.com/gin-gonic/gin"
@@ -28,6 +29,7 @@ func TestBuildRequestBodyPreservesExtensionFields(t *testing.T) {
 		"model":"public-model",
 		"prompt":"draw",
 		"async":true,
+		"stream":true,
 		"aspect_ratio":"7:6",
 		"seed":0,
 		"watermark":false,
@@ -46,10 +48,32 @@ func TestBuildRequestBodyPreservesExtensionFields(t *testing.T) {
 	require.NoError(t, common.Unmarshal(encoded, &fields))
 	require.JSONEq(t, `"upstream-model"`, string(fields["model"]))
 	require.JSONEq(t, `true`, string(fields["async"]))
+	_, hasStream := fields["stream"]
+	require.False(t, hasStream, "async task submission must request a JSON task response")
 	require.JSONEq(t, `"7:6"`, string(fields["aspect_ratio"]))
 	require.JSONEq(t, `0`, string(fields["seed"]))
 	require.JSONEq(t, `false`, string(fields["watermark"]))
 	require.JSONEq(t, `{"strength":0.25}`, string(fields["custom"]))
+}
+
+func TestValidateRequestAcceptsStreamBridgeWithoutClientAsyncFlag(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	c, _ := gin.CreateTestContext(httptest.NewRecorder())
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/images/generations", strings.NewReader(`{
+		"model":"public-model",
+		"prompt":"draw",
+		"stream":true
+	}`))
+	c.Request.Header.Set("Content-Type", "application/json")
+	common.SetContextKey(c, constant.ContextKeyAsyncImageStreamBridge, true)
+	info := &relaycommon.RelayInfo{
+		RelayMode:     relayconstant.RelayModeImagesGenerations,
+		TaskRelayInfo: &relaycommon.TaskRelayInfo{},
+	}
+
+	taskErr := (&TaskAdaptor{}).ValidateRequestAndSetAction(c, info)
+	require.Nil(t, taskErr)
+	require.Equal(t, constant.TaskActionImageGenerations, info.Action)
 }
 
 func TestDoResponseHidesUpstreamTaskID(t *testing.T) {

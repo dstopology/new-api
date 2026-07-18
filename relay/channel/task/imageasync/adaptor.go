@@ -55,7 +55,8 @@ func (a *TaskAdaptor) ValidateRequestAndSetAction(c *gin.Context, info *relaycom
 	if err != nil {
 		return service.TaskErrorWrapperLocal(err, "invalid_request", http.StatusBadRequest)
 	}
-	if request.Async == nil || !*request.Async {
+	streamBridge := common.GetContextKeyBool(c, constant.ContextKeyAsyncImageStreamBridge)
+	if (request.Async == nil || !*request.Async) && !streamBridge {
 		return service.TaskErrorWrapperLocal(fmt.Errorf("async must be true"), "invalid_request", http.StatusBadRequest)
 	}
 	if strings.TrimSpace(request.Prompt) == "" {
@@ -134,6 +135,7 @@ func (a *TaskAdaptor) BuildRequestBody(c *gin.Context, info *relaycommon.RelayIn
 	}
 	fields["model"] = modelJSON
 	fields["async"] = asyncJSON
+	delete(fields, "stream")
 	body, err = common.Marshal(fields)
 	if err != nil {
 		return nil, fmt.Errorf("encode request body: %w", err)
@@ -158,7 +160,7 @@ func buildMultipartBody(c *gin.Context, info *relaycommon.RelayInfo) (io.Reader,
 		return nil, err
 	}
 	for field, values := range form.Value {
-		if field == "model" || field == "async" {
+		if field == "model" || field == "async" || field == "stream" {
 			continue
 		}
 		for _, value := range values {

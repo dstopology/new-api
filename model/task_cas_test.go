@@ -151,6 +151,35 @@ func TestReserveAsyncImageTaskReplaysUserScopedKey(t *testing.T) {
 	require.Equal(t, "task_first", existing.TaskID)
 }
 
+func TestDeleteRejectedAsyncImageTaskOnlyDeletesSafeFallbackRows(t *testing.T) {
+	truncateTables(t)
+	rejected := &Task{
+		TaskID:          "task_rejected",
+		UserId:          17,
+		Platform:        constant.TaskPlatformAsyncImage,
+		Status:          TaskStatusFailure,
+		SubmissionState: TaskSubmissionStateRejected,
+	}
+	unknown := &Task{
+		TaskID:          "task_unknown",
+		UserId:          17,
+		Platform:        constant.TaskPlatformAsyncImage,
+		Status:          TaskStatusFailure,
+		SubmissionState: TaskSubmissionStateUnknown,
+	}
+	insertTask(t, rejected)
+	insertTask(t, unknown)
+
+	require.NoError(t, DeleteRejectedAsyncImageTask(17, rejected.TaskID))
+	_, exists, err := GetByTaskId(17, rejected.TaskID)
+	require.NoError(t, err)
+	require.False(t, exists)
+
+	_, exists, err = GetByTaskId(17, unknown.TaskID)
+	require.NoError(t, err)
+	require.True(t, exists, "ambiguous submissions must remain durable")
+}
+
 func TestReserveAsyncImageTaskConcurrentSingleWinner(t *testing.T) {
 	truncateTables(t)
 	const workers = 8

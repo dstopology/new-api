@@ -72,4 +72,5 @@ const (
 	// completed requests can be replayed without touching billing or upstreams.
 	ContextKeyAsyncImageIdempotencyKey ContextKey = "async_image_idempotency_key"
 	ContextKeyAsyncImageRequestHash    ContextKey = "async_image_request_hash"
+	ContextKeyAsyncImageStreamBridge   ContextKey = "async_image_stream_bridge"
 )

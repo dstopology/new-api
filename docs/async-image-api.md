@@ -2,6 +2,29 @@
 
 异步图片复用 OpenAI 图片路径。请求中不传 `async` 或传 `false` 时，现有同步行为不变；传 `true` 时，接口立即返回任务并由后台轮询上游。
 
+## 流式等待桥接
+
+普通非流式请求保持原有同步 JSON 行为。对于自定义 OpenAI 兼容渠道，客户端传入 `stream=true` 时，new-api 会复用异步图片任务作为流式等待桥接：
+
+1. 先建立本地幂等任务并向上游提交 `async=true`；提交给上游的请求会移除 `stream`，确保上游返回 JSON 任务信息。
+2. 等待期间以 SSE 注释 `: PING` 保持连接，默认间隔 25 秒。
+3. 后台轮询完成并把图片写入本地临时目录后，发送一条标准 OpenAI 图片 JSON `data` 事件，随后发送 `data: [DONE]`。
+4. 响应头 `X-New-API-Task-ID` 提供公开任务 ID。客户端断线后可以使用同一 `Idempotency-Key` 重试，或按异步查询接口继续取货。
+
+示例最终事件：
+
+```text
+: PING
+
+data: {"created":1784317622,"data":[{"url":"https://api.example.com/v1/images/generations/task_xxx/content/media_xxx","expires_at":1784317922}]}
+
+data: [DONE]
+```
+
+若自定义上游以明确的 `400`、`404`、`405`、`415` 或 `422` 拒绝异步提交，new-api 会删除本次已拒绝的本地 reservation、退款，并回退原有直连流式实现。网络错误、`429` 或不确定的 `5xx` 不会回退或重新提交，以免上游已经受理时发生重复生成和重复计费。
+
+官方 OpenAI 地址和非 OpenAI 类型渠道默认继续使用原有直连流式实现；客户端显式同时传入 `async=true` 与 `stream=true` 时会明确选择任务桥接。
+
 ## 提交任务
 
 ```http
@@ -104,9 +127,12 @@ ASYNC_MEDIA_MAX_FILE_MB=64
 ASYNC_MEDIA_DOWNLOAD_TIMEOUT_SECONDS=90
 ASYNC_MEDIA_METADATA_RETENTION_HOURS=24
 ASYNC_IMAGE_TASK_TIMEOUT_MINUTES=15
+ASYNC_IMAGE_STREAM_WAIT_TIMEOUT_MINUTES=15
 ASYNC_IMAGE_POLL_INTERVAL_SECONDS=5
 ASYNC_IMAGE_POLL_WORKERS=8
 TASK_POLLING_INTERVAL_SECONDS=15
 ```
 
 Docker 镜像的工作目录是 `/data`，因此默认文件目录为 `/data/async-media`。本地文件模式适用于单实例部署；多实例必须共享该目录并保持任务轮询节点和下载节点可访问同一文件系统。
+
+流式桥接是面向需要保持单连接等待的兼容模式。FrostFox 等可恢复任务系统仍应使用 `async=true`、任务查询和鉴权取货；这样页面刷新、进程重启或客户端总请求超时都不会丢失任务。

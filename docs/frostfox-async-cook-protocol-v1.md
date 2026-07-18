@@ -661,4 +661,5 @@ FrostFoxNoder 第一阶段完成以下用例即可开始联调：
 - new-api 查询和下载不占用个人模型生成 RPM；提交仍正常计费和限流。
 - new-api 当前应保持单实例运行，或让多个实例共享 `ASYNC_MEDIA_DIR`。
 - new-api 异步图片已实现本地 `Idempotency-Key` 去重与先落库后返回；视频暂未实现提交幂等，必须使用单次 POST 与 `submission_unknown` 规则。
+- `stream=true` 图片桥接仅用于兼容需要在一个 SSE 连接内等待的第三方客户端，不改变 FrostFox 的接入方式；FrostFox 仍使用 `async=true`、轮询、鉴权取货和平台资产持久化。
 - Sora/OpenAI 视频默认最大 512 MiB，可通过 `ASYNC_VIDEO_MAX_FILE_MB` 调整；上游取货超时默认 300 秒，可通过 `ASYNC_VIDEO_DOWNLOAD_TIMEOUT_SECONDS` 调整。

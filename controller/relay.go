@@ -502,23 +502,36 @@ func RelayTaskFetch(c *gin.Context) {
 }
 
 func RelayTask(c *gin.Context) {
-	relayInfo, err := relaycommon.GenRelayInfo(c, types.RelayFormatTask, nil, nil)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, &dto.TaskError{
-			Code:       "gen_relay_info_failed",
-			Message:    err.Error(),
-			StatusCode: http.StatusInternalServerError,
-		})
-		return
-	}
-
-	if taskErr := relay.ResolveOriginTask(c, relayInfo); taskErr != nil {
+	result, _, taskErr := executeRelayTask(c)
+	if taskErr != nil {
 		respondTaskError(c, taskErr)
 		return
 	}
+	if result != nil && result.Platform == constant.TaskPlatformAsyncImage {
+		c.Data(http.StatusOK, "application/json", result.TaskData)
+	}
+}
 
-	var result *relay.TaskSubmitResult
-	var taskErr *dto.TaskError
+func executeRelayTask(c *gin.Context) (result *relay.TaskSubmitResult, relayInfo *relaycommon.RelayInfo, taskErr *dto.TaskError) {
+	var err error
+	relayInfo, err = relaycommon.GenRelayInfo(c, types.RelayFormatTask, nil, nil)
+	if err != nil {
+		taskErr = &dto.TaskError{
+			Code:       "gen_relay_info_failed",
+			Message:    err.Error(),
+			StatusCode: http.StatusInternalServerError,
+		}
+		return
+	}
+	if common.GetContextKeyBool(c, constant.ContextKeyAsyncImageStreamBridge) {
+		relayInfo.IsStream = true
+		common.SetContextKey(c, constant.ContextKeyIsStream, true)
+	}
+
+	if taskErr = relay.ResolveOriginTask(c, relayInfo); taskErr != nil {
+		return
+	}
+
 	defer func() {
 		if taskErr != nil && relayInfo.Billing != nil {
 			relayInfo.Billing.Refund(c)
@@ -593,7 +606,6 @@ func RelayTask(c *gin.Context) {
 		if result == nil {
 			taskErr = service.TaskErrorWrapperLocal(errors.New("empty task submit result"), "empty_task_result", http.StatusInternalServerError)
 		} else if result.Replayed {
-			c.Data(http.StatusOK, "application/json", result.TaskData)
 			return
 		}
 	}
@@ -626,14 +638,9 @@ func RelayTask(c *gin.Context) {
 			if insertErr := task.Insert(); insertErr != nil {
 				common.SysError("insert task error: " + insertErr.Error())
 			}
-		} else {
-			c.Data(http.StatusOK, "application/json", result.TaskData)
 		}
 	}
-
-	if taskErr != nil {
-		respondTaskError(c, taskErr)
-	}
+	return
 }
 
 // respondTaskError 统一输出 Task 错误响应（含 429 限流提示改写）

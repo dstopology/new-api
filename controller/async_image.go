@@ -6,12 +6,17 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
+	"github.com/QuantumNous/new-api/dto"
+	"github.com/QuantumNous/new-api/logger"
 	"github.com/QuantumNous/new-api/model"
+	relayhelper "github.com/QuantumNous/new-api/relay/helper"
 	"github.com/QuantumNous/new-api/service"
 	"github.com/QuantumNous/new-api/types"
 
@@ -19,13 +24,27 @@ import (
 )
 
 func RelayImage(c *gin.Context) {
-	async, err := imageRequestWantsAsync(c)
+	async, stream, err := imageRequestDelivery(c)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": types.OpenAIError{
 			Message: err.Error(),
 			Type:    "invalid_request_error",
 			Code:    "invalid_request",
 		}})
+		return
+	}
+	if shouldBridgeAsyncImageStream(c, async, stream) {
+		if !constant.UpdateTask {
+			asyncImageError(c, http.StatusServiceUnavailable, "async_task_disabled", "async task polling is disabled")
+			return
+		}
+		if err := prepareAsyncImageIdempotency(c); err != nil {
+			asyncImageError(c, http.StatusBadRequest, "invalid_idempotency_key", err.Error())
+			return
+		}
+		c.Set("platform", string(constant.TaskPlatformAsyncImage))
+		common.SetContextKey(c, constant.ContextKeyAsyncImageStreamBridge, true)
+		relayAsyncImageStream(c)
 		return
 	}
 	if !async {
@@ -45,6 +64,248 @@ func RelayImage(c *gin.Context) {
 	}
 	c.Set("platform", string(constant.TaskPlatformAsyncImage))
 	RelayTask(c)
+}
+
+func imageRequestDelivery(c *gin.Context) (async bool, stream bool, err error) {
+	if strings.Contains(c.GetHeader("Content-Type"), "multipart/form-data") {
+		form, parseErr := common.ParseMultipartFormReusable(c)
+		if parseErr != nil {
+			return false, false, fmt.Errorf("parse multipart request: %w", parseErr)
+		}
+		defer form.RemoveAll()
+		async, err = optionalFormBool(form.Value, "async")
+		if err != nil {
+			return false, false, err
+		}
+		stream, err = optionalFormBool(form.Value, "stream")
+		return async, stream, err
+	}
+	var request struct {
+		Async  *bool `json:"async"`
+		Stream *bool `json:"stream"`
+	}
+	if err := common.UnmarshalBodyReusable(c, &request); err != nil {
+		return false, false, err
+	}
+	return request.Async != nil && *request.Async, request.Stream != nil && *request.Stream, nil
+}
+
+func optionalFormBool(values map[string][]string, field string) (bool, error) {
+	rawValues := values[field]
+	if len(rawValues) == 0 || strings.TrimSpace(rawValues[0]) == "" {
+		return false, nil
+	}
+	value, err := strconv.ParseBool(rawValues[0])
+	if err != nil {
+		return false, fmt.Errorf("%s must be true or false", field)
+	}
+	return value, nil
+}
+
+func shouldBridgeAsyncImageStream(c *gin.Context, async bool, stream bool) bool {
+	if !stream {
+		return false
+	}
+	if async {
+		return true
+	}
+	if common.GetContextKeyInt(c, constant.ContextKeyChannelType) != constant.ChannelTypeOpenAI {
+		return false
+	}
+	baseURL := strings.TrimSpace(common.GetContextKeyString(c, constant.ContextKeyChannelBaseUrl))
+	if baseURL == "" {
+		return false
+	}
+	parsed, err := url.Parse(baseURL)
+	if err != nil {
+		return false
+	}
+	host := parsed.Hostname()
+	return host != "" && !strings.EqualFold(host, "api.openai.com")
+}
+
+func relayAsyncImageStream(c *gin.Context) {
+	result, relayInfo, taskErr := executeRelayTask(c)
+	if taskErr != nil {
+		if shouldFallbackAsyncImageStream(taskErr) {
+			if relayInfo != nil && relayInfo.PublicTaskID != "" {
+				if err := model.DeleteRejectedAsyncImageTask(relayInfo.UserId, relayInfo.PublicTaskID); err != nil {
+					logger.LogError(c, fmt.Sprintf("delete rejected async image stream task %s: %v", relayInfo.PublicTaskID, err))
+					writeAsyncImageStreamError(c, "stream_fallback_failed", "failed to release rejected async image task")
+					return
+				}
+			}
+			c.Writer.Header().Del("X-New-API-Task-ID")
+			c.Set("platform", "")
+			common.SetContextKey(c, constant.ContextKeyAsyncImageStreamBridge, false)
+			Relay(c, types.RelayFormatOpenAIImage)
+			return
+		}
+		writeAsyncImageStreamError(c, taskErr.Code, taskErr.Message)
+		return
+	}
+	if result == nil || result.Task == nil {
+		writeAsyncImageStreamError(c, "empty_task_result", "async image task was not persisted")
+		return
+	}
+
+	taskID := result.Task.TaskID
+	c.Header("X-New-API-Task-ID", taskID)
+	relayhelper.SetEventStreamHeaders(c)
+	if err := relayhelper.PingData(c); err != nil {
+		return
+	}
+
+	task, err := waitForAsyncImageStreamTask(
+		c,
+		result.Task.UserId,
+		taskID,
+		time.Second,
+		relayhelper.DefaultImageKeepAliveInterval,
+		asyncImageStreamWaitTimeout(),
+		model.GetByTaskId,
+	)
+	if err != nil {
+		if c.Request.Context().Err() == nil {
+			writeAsyncImageStreamError(c, "stream_wait_failed", err.Error())
+		}
+		return
+	}
+	response, err := service.BuildAsyncImageTaskResponse(task)
+	if err != nil {
+		writeAsyncImageStreamError(c, "task_response_failed", "failed to build image result")
+		return
+	}
+	if response.Status == "failed" {
+		code := "generation_failed"
+		message := "image generation failed"
+		if response.Error != nil {
+			if response.Error.Code != "" {
+				code = response.Error.Code
+			}
+			if response.Error.Message != "" {
+				message = response.Error.Message
+			}
+		}
+		writeAsyncImageStreamError(c, code, message)
+		return
+	}
+	if response.OutputExpired || len(response.Data) == 0 {
+		writeAsyncImageStreamError(c, "output_expired", "temporary image has expired")
+		return
+	}
+	writeAsyncImageStreamResult(c, dto.ImageResponse{
+		Created: response.CreatedAt,
+		Data:    response.Data,
+	})
+}
+
+type asyncImageTaskLoader func(userID int, taskID string) (*model.Task, bool, error)
+
+func waitForAsyncImageStreamTask(
+	c *gin.Context,
+	userID int,
+	taskID string,
+	pollInterval time.Duration,
+	pingInterval time.Duration,
+	waitTimeout time.Duration,
+	load asyncImageTaskLoader,
+) (*model.Task, error) {
+	if pollInterval <= 0 {
+		pollInterval = time.Second
+	}
+	if pingInterval <= 0 {
+		pingInterval = relayhelper.DefaultImageKeepAliveInterval
+	}
+	if waitTimeout <= 0 {
+		waitTimeout = 15 * time.Minute
+	}
+	pollTicker := time.NewTicker(pollInterval)
+	pingTicker := time.NewTicker(pingInterval)
+	timeout := time.NewTimer(waitTimeout)
+	defer pollTicker.Stop()
+	defer pingTicker.Stop()
+	defer timeout.Stop()
+
+	for {
+		task, exists, err := load(userID, taskID)
+		if err != nil {
+			return nil, fmt.Errorf("query async image task: %w", err)
+		}
+		if !exists || task == nil {
+			return nil, errors.New("async image task not found")
+		}
+		if task.Status == model.TaskStatusSuccess || task.Status == model.TaskStatusFailure {
+			return task, nil
+		}
+
+		select {
+		case <-c.Request.Context().Done():
+			return nil, c.Request.Context().Err()
+		case <-pollTicker.C:
+		case <-pingTicker.C:
+			if err := relayhelper.PingData(c); err != nil {
+				return nil, fmt.Errorf("send stream ping: %w", err)
+			}
+		case <-timeout.C:
+			return nil, fmt.Errorf("async image stream wait exceeded %s", waitTimeout)
+		}
+	}
+}
+
+func asyncImageStreamWaitTimeout() time.Duration {
+	defaultMinutes := common.GetEnvOrDefault("ASYNC_IMAGE_TASK_TIMEOUT_MINUTES", 15)
+	minutes := common.GetEnvOrDefault("ASYNC_IMAGE_STREAM_WAIT_TIMEOUT_MINUTES", defaultMinutes)
+	if minutes <= 0 {
+		minutes = 15
+	}
+	return time.Duration(minutes) * time.Minute
+}
+
+func shouldFallbackAsyncImageStream(taskErr *dto.TaskError) bool {
+	if taskErr == nil || taskErr.LocalError {
+		return false
+	}
+	switch taskErr.StatusCode {
+	case http.StatusBadRequest, http.StatusNotFound, http.StatusMethodNotAllowed,
+		http.StatusUnsupportedMediaType, http.StatusUnprocessableEntity:
+		return true
+	default:
+		return false
+	}
+}
+
+func writeAsyncImageStreamResult(c *gin.Context, response dto.ImageResponse) {
+	body, err := common.Marshal(response)
+	if err != nil {
+		writeAsyncImageStreamError(c, "marshal_response_failed", "failed to encode image result")
+		return
+	}
+	relayhelper.SetEventStreamHeaders(c)
+	if err := relayhelper.StringData(c, string(body)); err == nil {
+		relayhelper.Done(c)
+	}
+}
+
+func writeAsyncImageStreamError(c *gin.Context, code string, message string) {
+	if code == "" {
+		code = "stream_error"
+	}
+	if message == "" {
+		message = "image stream failed"
+	}
+	body, err := common.Marshal(gin.H{"error": gin.H{
+		"code":    code,
+		"message": message,
+		"type":    "new_api_error",
+	}})
+	if err != nil {
+		return
+	}
+	relayhelper.SetEventStreamHeaders(c)
+	if err := relayhelper.StringData(c, string(body)); err == nil {
+		relayhelper.Done(c)
+	}
 }
 
 func prepareAsyncImageIdempotency(c *gin.Context) error {
@@ -158,29 +419,8 @@ func replayAsyncImageIdempotentTask(c *gin.Context) bool {
 }
 
 func imageRequestWantsAsync(c *gin.Context) (bool, error) {
-	if strings.Contains(c.GetHeader("Content-Type"), "multipart/form-data") {
-		form, err := common.ParseMultipartFormReusable(c)
-		if err != nil {
-			return false, fmt.Errorf("parse multipart request: %w", err)
-		}
-		defer form.RemoveAll()
-		values := form.Value["async"]
-		if len(values) == 0 || strings.TrimSpace(values[0]) == "" {
-			return false, nil
-		}
-		async, err := strconv.ParseBool(values[0])
-		if err != nil {
-			return false, errors.New("async must be true or false")
-		}
-		return async, nil
-	}
-	var request struct {
-		Async *bool `json:"async"`
-	}
-	if err := common.UnmarshalBodyReusable(c, &request); err != nil {
-		return false, err
-	}
-	return request.Async != nil && *request.Async, nil
+	async, _, err := imageRequestDelivery(c)
+	return async, err
 }
 
 func RelayImageTaskFetch(c *gin.Context) {

@@ -472,6 +472,20 @@ func DeleteAsyncImageTaskReservation(id int64) error {
 		Delete(&Task{}).Error
 }
 
+func DeleteRejectedAsyncImageTask(userID int, taskID string) error {
+	if userID == 0 || strings.TrimSpace(taskID) == "" {
+		return nil
+	}
+	return DB.Where(
+		"user_id = ? AND task_id = ? AND platform = ? AND submission_state = ? AND status = ?",
+		userID,
+		taskID,
+		constant.TaskPlatformAsyncImage,
+		TaskSubmissionStateRejected,
+		TaskStatusFailure,
+	).Delete(&Task{}).Error
+}
+
 // UpdateWithSubmissionState finalizes a reservation with a CAS guard so a
 // stale request handler cannot overwrite a recovery transition.
 func (t *Task) UpdateWithSubmissionState(fromState string) (bool, error) {
