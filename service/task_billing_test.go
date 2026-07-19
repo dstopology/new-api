@@ -52,6 +52,28 @@ func TestMain(m *testing.M) {
 	os.Exit(m.Run())
 }
 
+func TestTaskBillingPolicy(t *testing.T) {
+	t.Run("fixed price defaults to per request", func(t *testing.T) {
+		policy := newTaskBillingPolicy("ratio", true, false)
+		require.True(t, policy.IsPerRequest())
+		require.False(t, policy.ShouldApplyRatio("seconds"))
+		require.True(t, policy.ShouldApplyRatio("resolution"))
+	})
+
+	t.Run("explicit per second applies duration", func(t *testing.T) {
+		policy := newTaskBillingPolicy("per_second", true, false)
+		require.False(t, policy.IsPerRequest())
+		require.True(t, policy.ShouldApplyRatio("seconds"))
+	})
+
+	t.Run("legacy task price patch ignores all ratios", func(t *testing.T) {
+		policy := newTaskBillingPolicy("per_second", true, true)
+		require.True(t, policy.IsPerRequest())
+		require.False(t, policy.ShouldApplyRatio("seconds"))
+		require.False(t, policy.ShouldApplyRatio("resolution"))
+	})
+}
+
 // ---------------------------------------------------------------------------
 // Seed helpers
 // ---------------------------------------------------------------------------

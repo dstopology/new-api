@@ -620,6 +620,7 @@ func executeRelayTask(c *gin.Context) (result *relay.TaskSubmitResult, relayInfo
 		// established insert path.
 		if result.Platform != constant.TaskPlatformAsyncImage {
 			task := model.InitTask(result.Platform, relayInfo)
+			billingPolicy := service.ResolveTaskBillingPolicy(relayInfo.OriginModelName, relayInfo.PriceData.UsePrice)
 			task.PrivateData.UpstreamTaskID = result.UpstreamTaskID
 			task.PrivateData.BillingSource = relayInfo.BillingSource
 			task.PrivateData.SubscriptionId = relayInfo.SubscriptionId
@@ -630,7 +631,8 @@ func executeRelayTask(c *gin.Context) (result *relay.TaskSubmitResult, relayInfo
 				ModelRatio:      relayInfo.PriceData.ModelRatio,
 				OtherRatios:     relayInfo.PriceData.OtherRatios,
 				OriginModelName: relayInfo.OriginModelName,
-				PerCallBilling:  common.StringsContains(constant.TaskPricePatches, relayInfo.OriginModelName) || relayInfo.PriceData.UsePrice,
+				BillingMode:     billingPolicy.Mode,
+				PerCallBilling:  billingPolicy.IsPerRequest(),
 			}
 			task.Quota = result.Quota
 			task.Data = result.TaskData

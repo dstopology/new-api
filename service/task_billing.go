@@ -10,35 +10,86 @@ import (
 	"github.com/QuantumNous/new-api/logger"
 	"github.com/QuantumNous/new-api/model"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
+	"github.com/QuantumNous/new-api/setting/billing_setting"
 	"github.com/QuantumNous/new-api/setting/ratio_setting"
 	"github.com/gin-gonic/gin"
 )
+
+type TaskBillingPolicy struct {
+	Mode            string
+	ignoreAllRatios bool
+}
+
+func newTaskBillingPolicy(mode string, usePrice bool, ignoreAllRatios bool) TaskBillingPolicy {
+	if ignoreAllRatios {
+		return TaskBillingPolicy{
+			Mode:            billing_setting.BillingModePerRequest,
+			ignoreAllRatios: true,
+		}
+	}
+
+	// Fixed-price models are shown as per-request unless they are explicitly
+	// configured as per-second. Keep the billing calculation aligned with that
+	// public price unit.
+	if usePrice && mode != billing_setting.BillingModePerSecond {
+		mode = billing_setting.BillingModePerRequest
+	}
+	return TaskBillingPolicy{Mode: mode}
+}
+
+func ResolveTaskBillingPolicy(modelName string, usePrice bool) TaskBillingPolicy {
+	return newTaskBillingPolicy(
+		billing_setting.GetBillingMode(modelName),
+		usePrice,
+		common.StringsContains(constant.TaskPricePatches, modelName),
+	)
+}
+
+func (p TaskBillingPolicy) IsPerRequest() bool {
+	return p.Mode == billing_setting.BillingModePerRequest
+}
+
+func (p TaskBillingPolicy) ShouldApplyRatio(name string) bool {
+	if p.ignoreAllRatios {
+		return false
+	}
+	if !p.IsPerRequest() {
+		return true
+	}
+
+	switch strings.ToLower(strings.TrimSpace(name)) {
+	case "second", "seconds", "duration", "duration_seconds":
+		return false
+	default:
+		return true
+	}
+}
 
 // LogTaskConsumption 记录任务消费日志和统计信息（仅记录，不涉及实际扣费）。
 // 实际扣费已由 BillingSession（PreConsumeBilling + SettleBilling）完成。
 func LogTaskConsumption(c *gin.Context, info *relaycommon.RelayInfo) {
 	tokenName := c.GetString("token_name")
 	logContent := fmt.Sprintf("操作 %s", info.Action)
-	// 支持任务仅按次计费
-	if common.StringsContains(constant.TaskPricePatches, info.OriginModelName) {
+	billingPolicy := ResolveTaskBillingPolicy(info.OriginModelName, info.PriceData.UsePrice)
+	if billingPolicy.IsPerRequest() {
 		logContent = fmt.Sprintf("%s，按次计费", logContent)
-	} else {
-		if len(info.PriceData.OtherRatios) > 0 {
-			var contents []string
-			for key, ra := range info.PriceData.OtherRatios {
-				if 1.0 != ra {
-					contents = append(contents, fmt.Sprintf("%s: %.2f", key, ra))
-				}
+	}
+	if len(info.PriceData.OtherRatios) > 0 {
+		var contents []string
+		for key, ra := range info.PriceData.OtherRatios {
+			if billingPolicy.ShouldApplyRatio(key) && 1.0 != ra {
+				contents = append(contents, fmt.Sprintf("%s: %.2f", key, ra))
 			}
-			if len(contents) > 0 {
-				logContent = fmt.Sprintf("%s, 计算参数：%s", logContent, strings.Join(contents, ", "))
-			}
+		}
+		if len(contents) > 0 {
+			logContent = fmt.Sprintf("%s, 计算参数：%s", logContent, strings.Join(contents, ", "))
 		}
 	}
 	other := make(map[string]interface{})
 	other["is_task"] = true
 	other["request_path"] = c.Request.URL.Path
 	other["model_price"] = info.PriceData.ModelPrice
+	other["billing_mode"] = billingPolicy.Mode
 	if info.PriceData.ModelRatio > 0 {
 		other["model_ratio"] = info.PriceData.ModelRatio
 	}
@@ -121,6 +172,9 @@ func taskBillingOther(task *model.Task) map[string]interface{} {
 	other := make(map[string]interface{})
 	if bc := task.PrivateData.BillingContext; bc != nil {
 		other["model_price"] = bc.ModelPrice
+		if bc.BillingMode != "" {
+			other["billing_mode"] = bc.BillingMode
+		}
 		if bc.ModelRatio > 0 {
 			other["model_ratio"] = bc.ModelRatio
 		}

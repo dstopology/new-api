@@ -103,6 +103,7 @@ func reserveAsyncImageSubmission(
 }
 
 func populateAsyncImageTaskBilling(task *model.Task, info *relaycommon.RelayInfo, quota int) {
+	billingPolicy := service.ResolveTaskBillingPolicy(info.OriginModelName, info.PriceData.UsePrice)
 	task.Quota = quota
 	task.PrivateData.BillingSource = info.BillingSource
 	task.PrivateData.SubscriptionId = info.SubscriptionId
@@ -113,7 +114,8 @@ func populateAsyncImageTaskBilling(task *model.Task, info *relaycommon.RelayInfo
 		ModelRatio:      info.PriceData.ModelRatio,
 		OtherRatios:     info.PriceData.OtherRatios,
 		OriginModelName: info.OriginModelName,
-		PerCallBilling:  common.StringsContains(constant.TaskPricePatches, info.OriginModelName) || info.PriceData.UsePrice,
+		BillingMode:     billingPolicy.Mode,
+		PerCallBilling:  billingPolicy.IsPerRequest(),
 	}
 }
 
@@ -314,6 +316,8 @@ func RelayTaskSubmit(c *gin.Context, info *relaycommon.RelayInfo) (*TaskSubmitRe
 		return nil, service.TaskErrorWrapper(err, "model_price_error", http.StatusBadRequest)
 	}
 	info.PriceData = priceData
+	baseQuota := priceData.Quota
+	billingPolicy := service.ResolveTaskBillingPolicy(modelName, priceData.UsePrice)
 
 	// 5. 计费估算：让适配器根据用户请求提供 OtherRatios（时长、分辨率等）
 	//    必须在 ModelPriceHelperPerCall 之后调用（它会重建 PriceData）。
@@ -324,14 +328,9 @@ func RelayTaskSubmit(c *gin.Context, info *relaycommon.RelayInfo) (*TaskSubmitRe
 		}
 	}
 
-	// 6. 将 OtherRatios 应用到基础额度
-	if !common.StringsContains(constant.TaskPricePatches, modelName) {
-		for _, ra := range info.PriceData.OtherRatios {
-			if ra != 1.0 {
-				info.PriceData.Quota = int(float64(info.PriceData.Quota) * ra)
-			}
-		}
-	}
+	// 6. 按模型公开的计费单位应用倍率。按次模型不乘视频时长；
+	// 按秒模型才应用 seconds/duration，同时保留分辨率等独立倍率。
+	info.PriceData.Quota = calculateTaskQuota(baseQuota, info.PriceData.OtherRatios, billingPolicy)
 
 	// 7. 非异步图片任务维持原有顺序；异步图片必须先建立 durable
 	// reservation，命中幂等回放时不能触碰计费。
@@ -413,7 +412,7 @@ func RelayTaskSubmit(c *gin.Context, info *relaycommon.RelayInfo) (*TaskSubmitRe
 	finalQuota := info.PriceData.Quota
 	if adjustedRatios := adaptor.AdjustBillingOnSubmit(info, taskData); len(adjustedRatios) > 0 {
 		// 基于调整后的 ratios 重新计算 quota
-		finalQuota = recalcQuotaFromRatios(info, adjustedRatios)
+		finalQuota = calculateTaskQuota(baseQuota, adjustedRatios, billingPolicy)
 		info.PriceData.OtherRatios = adjustedRatios
 		info.PriceData.Quota = finalQuota
 	}
@@ -443,21 +442,12 @@ func RelayTaskSubmit(c *gin.Context, info *relaycommon.RelayInfo) (*TaskSubmitRe
 	return result, nil
 }
 
-// recalcQuotaFromRatios 根据 adjustedRatios 重新计算 quota。
-// 公式: baseQuota × ∏(ratio) — 其中 baseQuota 是不含 OtherRatios 的基础额度。
-func recalcQuotaFromRatios(info *relaycommon.RelayInfo, ratios map[string]float64) int {
-	// 从 PriceData 获取不含 OtherRatios 的基础价格
-	baseQuota := info.PriceData.Quota
-	// 先除掉原有的 OtherRatios 恢复基础额度
-	for _, ra := range info.PriceData.OtherRatios {
-		if ra != 1.0 && ra > 0 {
-			baseQuota = int(float64(baseQuota) / ra)
-		}
-	}
-	// 应用新的 ratios
+// calculateTaskQuota applies only the multipliers allowed by the model's
+// public billing unit to an unmodified base quota.
+func calculateTaskQuota(baseQuota int, ratios map[string]float64, billingPolicy service.TaskBillingPolicy) int {
 	result := float64(baseQuota)
-	for _, ra := range ratios {
-		if ra != 1.0 {
+	for name, ra := range ratios {
+		if billingPolicy.ShouldApplyRatio(name) && ra != 1.0 {
 			result *= ra
 		}
 	}
