@@ -19,17 +19,17 @@ func TestHasValidRegistrationCredentials(t *testing.T) {
 		password string
 		want     bool
 	}{
-		{name: "letters and allowed punctuation", username: "Alice@example.com", password: "Secure@Pass.", want: true},
+		{name: "letters digits and allowed punctuation", username: "Alice1@example.com", password: "Secure9@Pass.", want: true},
 		{name: "single letter username", username: "A", password: "abcdefgh", want: true},
 		{name: "empty username", username: "", password: "abcdefgh", want: false},
-		{name: "username digit", username: "alice1", password: "abcdefgh", want: false},
+		{name: "username digit", username: "alice1", password: "abcdefgh", want: true},
 		{name: "username underscore", username: "alice_name", password: "abcdefgh", want: false},
 		{name: "username whitespace", username: "alice name", password: "abcdefgh", want: false},
 		{name: "username unicode", username: "alice\u7528\u6237", password: "abcdefgh", want: false},
 		{name: "username too long", username: strings.Repeat("a", registrationUsernameMaxBytes+1), password: "abcdefgh", want: false},
 		{name: "password too short", username: "alice", password: "abcdefg", want: false},
 		{name: "password too long", username: "alice", password: strings.Repeat("a", registrationPasswordMaxBytes+1), want: false},
-		{name: "password digit", username: "alice", password: "abcdefg1", want: false},
+		{name: "password digit", username: "alice", password: "abcdefg1", want: true},
 		{name: "password symbol outside whitelist", username: "alice", password: "abcdefg!", want: false},
 		{name: "password whitespace", username: "alice", password: "abcd efgh", want: false},
 		{name: "password unicode", username: "alice", password: "abcdefg\u5bc6", want: false},
@@ -62,8 +62,8 @@ func TestRegisterRejectsInvalidCredentialsBeforeDatabase(t *testing.T) {
 		body string
 	}{
 		{name: "empty username", body: `{"username":"","password":"abcdefgh"}`},
-		{name: "username digit", body: `{"username":"alice1","password":"abcdefgh"}`},
-		{name: "password digit", body: `{"username":"alice","password":"abcdefg1"}`},
+		{name: "username underscore", body: `{"username":"alice_name","password":"abcdefgh"}`},
+		{name: "password symbol", body: `{"username":"alice","password":"abcdefg!"}`},
 		{name: "oversized request", body: `{"username":"` + strings.Repeat("a", int(maxRegistrationBodyBytes)) + `","password":"abcdefgh"}`},
 	}
 

@@ -46,7 +46,10 @@ func isAllowedRegistrationCredential(value string, minLength int, maxLength int)
 	}
 	for i := 0; i < len(value); i++ {
 		char := value[i]
-		if (char >= 'a' && char <= 'z') || (char >= 'A' && char <= 'Z') || char == '@' || char == '.' {
+		if (char >= 'a' && char <= 'z') ||
+			(char >= 'A' && char <= 'Z') ||
+			(char >= '0' && char <= '9') ||
+			char == '@' || char == '.' {
 			continue
 		}
 		return false
@@ -181,7 +184,9 @@ func Register(c *gin.Context) {
 		return
 	}
 	if !hasValidRegistrationCredentials(&user) {
-		common.ApiErrorI18n(c, i18n.MsgInvalidParams)
+		common.ApiErrorI18n(c, i18n.MsgUserInputInvalid, map[string]any{
+			"Error": "username: 1-20 characters; password: 8-20 characters; allowed: A-Z, a-z, 0-9, @, .",
+		})
 		return
 	}
 	if err := common.Validate.Struct(&user); err != nil {
