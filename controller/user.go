@@ -32,6 +32,33 @@ type LoginRequest struct {
 	Password string `json:"password"`
 }
 
+const (
+	maxRegistrationBodyBytes     int64 = 4 << 10
+	registrationUsernameMinBytes       = 1
+	registrationUsernameMaxBytes       = model.UserNameMaxLength
+	registrationPasswordMinBytes       = 8
+	registrationPasswordMaxBytes       = 20
+)
+
+func isAllowedRegistrationCredential(value string, minLength int, maxLength int) bool {
+	if len(value) < minLength || len(value) > maxLength {
+		return false
+	}
+	for i := 0; i < len(value); i++ {
+		char := value[i]
+		if (char >= 'a' && char <= 'z') || (char >= 'A' && char <= 'Z') || char == '@' || char == '.' {
+			continue
+		}
+		return false
+	}
+	return true
+}
+
+func hasValidRegistrationCredentials(user *model.User) bool {
+	return isAllowedRegistrationCredential(user.Username, registrationUsernameMinBytes, registrationUsernameMaxBytes) &&
+		isAllowedRegistrationCredential(user.Password, registrationPasswordMinBytes, registrationPasswordMaxBytes)
+}
+
 func Login(c *gin.Context) {
 	if !common.PasswordLoginEnabled {
 		common.ApiErrorI18n(c, i18n.MsgUserPasswordLoginDisabled)
@@ -147,8 +174,13 @@ func Register(c *gin.Context) {
 		return
 	}
 	var user model.User
-	err := json.NewDecoder(c.Request.Body).Decode(&user)
+	c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, maxRegistrationBodyBytes)
+	err := common.DecodeJson(c.Request.Body, &user)
 	if err != nil {
+		common.ApiErrorI18n(c, i18n.MsgInvalidParams)
+		return
+	}
+	if !hasValidRegistrationCredentials(&user) {
 		common.ApiErrorI18n(c, i18n.MsgInvalidParams)
 		return
 	}
