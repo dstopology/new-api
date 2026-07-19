@@ -14,11 +14,18 @@ import (
 	"github.com/QuantumNous/new-api/dto"
 )
 
-const NodeStudioHandoffAAD = "new-api-node-studio:v1"
+const (
+	NodeStudioHandoffVersion       = 2
+	NodeStudioHandoffVersionPrefix = "v2"
+	NodeStudioHandoffAAD           = "new-api-node-studio:v2"
+)
 
 func EncryptNodeStudioHandoff(payload *dto.NodeStudioHandoffPayload, secret string) (string, error) {
 	if payload == nil {
 		return "", errors.New("Node Studio handoff payload is required")
+	}
+	if payload.Version != NodeStudioHandoffVersion {
+		return "", fmt.Errorf("unsupported Node Studio handoff version: %d", payload.Version)
 	}
 
 	normalizedSecret := strings.TrimSpace(secret)
@@ -47,5 +54,5 @@ func EncryptNodeStudioHandoff(payload *dto.NodeStudioHandoffPayload, secret stri
 	}
 
 	sealed := gcm.Seal(nil, nonce, plaintext, []byte(NodeStudioHandoffAAD))
-	return "v1." + base64.RawURLEncoding.EncodeToString(nonce) + "." + base64.RawURLEncoding.EncodeToString(sealed), nil
+	return NodeStudioHandoffVersionPrefix + "." + base64.RawURLEncoding.EncodeToString(nonce) + "." + base64.RawURLEncoding.EncodeToString(sealed), nil
 }

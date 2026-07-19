@@ -8,6 +8,7 @@ import (
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/model"
+	"github.com/QuantumNous/new-api/service"
 	"github.com/QuantumNous/new-api/setting/config"
 	"github.com/QuantumNous/new-api/setting/system_setting"
 
@@ -57,9 +58,9 @@ func runNodeStudioHandoffForTest(t *testing.T, userID int) *httptest.ResponseRec
 	return recorder
 }
 
-func TestNodeStudioHandoffCreatesEncryptedBundleAndReusesAccessToken(t *testing.T) {
+func TestNodeStudioHandoffCreatesAccountOnlyBundleAndReusesAccessToken(t *testing.T) {
 	db := openTokenControllerTestDB(t)
-	if err := db.AutoMigrate(&model.User{}, &model.Token{}); err != nil {
+	if err := db.AutoMigrate(&model.User{}); err != nil {
 		t.Fatalf("migrate Node Studio test tables: %v", err)
 	}
 	configureNodeStudioForTest(t)
@@ -74,18 +75,6 @@ func TestNodeStudioHandoffCreatesEncryptedBundleAndReusesAccessToken(t *testing.
 	if err := db.Create(user).Error; err != nil {
 		t.Fatalf("create user: %v", err)
 	}
-	apiToken := &model.Token{
-		UserId:      user.Id,
-		Key:         "plain-api-key",
-		Name:        "image key",
-		Status:      common.TokenStatusEnabled,
-		ExpiredTime: -1,
-		RemainQuota: 100,
-	}
-	if err := db.Create(apiToken).Error; err != nil {
-		t.Fatalf("create API token: %v", err)
-	}
-
 	first := runNodeStudioHandoffForTest(t, user.Id)
 	if first.Code != http.StatusOK {
 		t.Fatalf("first handoff status = %d, body = %s", first.Code, first.Body.String())
@@ -94,11 +83,11 @@ func TestNodeStudioHandoffCreatesEncryptedBundleAndReusesAccessToken(t *testing.
 	if !strings.Contains(body, `action="https://node.example.com/auth/import-keys"`) {
 		t.Fatalf("handoff target missing from body: %s", body)
 	}
-	if !strings.Contains(body, `value="v1.`) {
+	if !strings.Contains(body, `value="`+service.NodeStudioHandoffVersionPrefix+`.`) {
 		t.Fatalf("encrypted payload missing from body: %s", body)
 	}
-	if strings.Contains(body, user.Username) || strings.Contains(body, apiToken.Key) {
-		t.Fatal("handoff HTML must not contain plaintext user or API key data")
+	if strings.Contains(body, user.Username) {
+		t.Fatal("handoff HTML must not contain plaintext user data")
 	}
 
 	var persisted model.User
@@ -108,6 +97,9 @@ func TestNodeStudioHandoffCreatesEncryptedBundleAndReusesAccessToken(t *testing.
 	firstAccessToken := persisted.GetAccessToken()
 	if firstAccessToken == "" {
 		t.Fatal("handoff did not create a dashboard access token")
+	}
+	if strings.Contains(body, firstAccessToken) {
+		t.Fatal("handoff HTML must not contain a plaintext dashboard access token")
 	}
 
 	second := runNodeStudioHandoffForTest(t, user.Id)

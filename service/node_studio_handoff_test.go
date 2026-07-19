@@ -16,7 +16,7 @@ func decryptNodeStudioHandoffForTest(t *testing.T, encrypted string, secret stri
 	t.Helper()
 
 	parts := strings.Split(encrypted, ".")
-	if len(parts) != 3 || parts[0] != "v1" {
+	if len(parts) != 3 || parts[0] != NodeStudioHandoffVersionPrefix {
 		t.Fatalf("unexpected encrypted handoff format: %q", encrypted)
 	}
 	nonce, err := base64.RawURLEncoding.DecodeString(parts[1])
@@ -51,7 +51,7 @@ func decryptNodeStudioHandoffForTest(t *testing.T, encrypted string, secret stri
 
 func TestEncryptNodeStudioHandoff(t *testing.T) {
 	payload := &dto.NodeStudioHandoffPayload{
-		Version:    1,
+		Version:    NodeStudioHandoffVersion,
 		IssuedAt:   100,
 		ExpiresAt:  220,
 		APIBaseURL: "https://api.example.com",
@@ -59,9 +59,6 @@ func TestEncryptNodeStudioHandoff(t *testing.T) {
 			ID:          42,
 			Username:    "测试用户",
 			AccessToken: "user-secret",
-		},
-		APIKeys: []dto.NodeStudioHandoffAPIKey{
-			{ID: 7, Name: "生图 Key", APIKey: "sk-test"},
 		},
 	}
 
@@ -74,8 +71,12 @@ func TestEncryptNodeStudioHandoff(t *testing.T) {
 	if decrypted.User.Username != payload.User.Username {
 		t.Fatalf("username = %q, want %q", decrypted.User.Username, payload.User.Username)
 	}
-	if len(decrypted.APIKeys) != 1 || decrypted.APIKeys[0].APIKey != "sk-test" {
-		t.Fatalf("api_keys = %#v", decrypted.APIKeys)
+	serialized, err := common.Marshal(decrypted)
+	if err != nil {
+		t.Fatalf("marshal decrypted handoff: %v", err)
+	}
+	if strings.Contains(string(serialized), "api_keys") {
+		t.Fatalf("account-only handoff unexpectedly contains api_keys: %s", serialized)
 	}
 
 	second, err := EncryptNodeStudioHandoff(payload, "shared-secret")
@@ -91,7 +92,10 @@ func TestEncryptNodeStudioHandoffRejectsMissingInput(t *testing.T) {
 	if _, err := EncryptNodeStudioHandoff(nil, "secret"); err == nil {
 		t.Fatal("expected nil payload error")
 	}
-	if _, err := EncryptNodeStudioHandoff(&dto.NodeStudioHandoffPayload{}, "  "); err == nil {
+	if _, err := EncryptNodeStudioHandoff(&dto.NodeStudioHandoffPayload{Version: NodeStudioHandoffVersion}, "  "); err == nil {
 		t.Fatal("expected empty secret error")
+	}
+	if _, err := EncryptNodeStudioHandoff(&dto.NodeStudioHandoffPayload{Version: 1}, "secret"); err == nil {
+		t.Fatal("expected unsupported version error")
 	}
 }

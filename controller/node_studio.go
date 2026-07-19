@@ -95,29 +95,8 @@ func NodeStudioHandoff(c *gin.Context) {
 	}
 
 	now := common.GetTimestamp()
-	tokens, err := model.GetUsableUserTokens(userID, now)
-	if err != nil {
-		common.ApiError(c, err)
-		return
-	}
-	apiKeys := make([]dto.NodeStudioHandoffAPIKey, 0, len(tokens))
-	for _, token := range tokens {
-		apiKey := strings.TrimSpace(token.GetFullKey())
-		if apiKey == "" {
-			continue
-		}
-		if !strings.HasPrefix(apiKey, "sk-") {
-			apiKey = "sk-" + apiKey
-		}
-		apiKeys = append(apiKeys, dto.NodeStudioHandoffAPIKey{
-			ID:     token.Id,
-			Name:   token.Name,
-			APIKey: apiKey,
-		})
-	}
-
 	payload := &dto.NodeStudioHandoffPayload{
-		Version:    1,
+		Version:    service.NodeStudioHandoffVersion,
 		IssuedAt:   now,
 		ExpiresAt:  now + nodeStudioHandoffTTLSeconds,
 		APIBaseURL: nodeStudioAPIBaseURL(c),
@@ -126,7 +105,6 @@ func NodeStudioHandoff(c *gin.Context) {
 			Username:    user.Username,
 			AccessToken: accessToken,
 		},
-		APIKeys: apiKeys,
 	}
 	encrypted, err := service.EncryptNodeStudioHandoff(payload, settings.Secret)
 	if err != nil {
