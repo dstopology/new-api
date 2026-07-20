@@ -421,7 +421,153 @@ Veo Ref 示例：
 
 当前上游对两款 Sora 都会忽略 `generate_audio: false` 并生成非静音音轨。new-api 会拒绝该组合；FrostFox 的 Sora Node 暂时不要显示关闭音频选项。Veo 的 `generate_audio: false` 已验证会生成无音轨视频。
 
-视频 Cook Cache Key 必须包含模型、prompt、negative prompt、duration、aspect ratio、resolution、generate audio，以及按数组顺序排列的每个输入 Asset 内容哈希。首尾帧交换顺序必须产生不同的 Cache Key。
+#### 3.5.1 Seedance 2.0 与 Omni 新增模型
+
+下列参数约束固化自 2026-07-20 当前渠道上游公开的 `api_doc` 与 `video_ui_params`。与前述已经完成真实任务验证的 Sora/Veo 不同，这五个模型尚未在本协议中逐项完成真实生成矩阵验证；上游元数据变化时，FrostFox 的 Node schema、Worker 校验和本节 MUST 同步更新。
+
+以下五个 public 模型名已经在 new-api 的视频渠道中启用，并按请求固定计费：
+
+| 模型 | 生成模式 | 时长 | 分辨率 | 画幅 | 素材能力 |
+| --- | --- | --- | --- | --- | --- |
+| `sd5-seedance-2.0` | 文生、首尾帧、全能参考 | `4`～`15` 任意整数，默认 `4` | `480p` / `720p`，默认 `720p` | `16:9` / `9:16`，默认 `9:16` | 最多 9 图、3 视频、3 音频，三类合计不超过 12 |
+| `sd5-seedance-2.0-fast` | 文生、首尾帧、全能参考 | `4`～`15` 任意整数，默认 `4` | `480p` / `720p`，默认 `480p` | `16:9` / `9:16`，默认 `9:16` | 与 `sd5-seedance-2.0` 相同 |
+| `seedance-2.0` | 文生、单图、首尾帧、多模态 | `4`～`15` 任意整数 | `480p` / `720p` | `16:9` / `9:16` / `1:1` / `21:9` / `3:4` / `4:3`，默认 `16:9` | 最多 4 图、3 视频、1 音频；参考视频总时长不超过 15 秒 |
+| `omni-fast-no-water` | 文生、图生、首帧、尾帧 | 固定约 10 秒，不传 | 固定 `720p`，不传 | `16:9` / `9:16`，默认 `16:9` | JSON 单图或首尾帧；multipart 最多 5 图 |
+| `omni-v2v-no-water` | 视频转视频 | 固定约 10 秒，不传 | 固定 `720p`，不传 | `16:9` / `9:16` | 1 个源视频 |
+
+这五个模型当前没有 new-api 内置的专用参数 profile。new-api 会保留请求中的模型参数并转发，但不会替 FrostFox 补字段、转换素材字段或执行下述模型级校验。因此 FrostFox Node 和 Worker MUST 按本节构造并校验请求，不能套用前文 Sora/Veo 的 `images` 规则。`model` MUST 使用表中的 public 名称。
+
+这五个模型均按一次成功提交对应一次生成计价。`duration` 只是生成参数，FrostFox 不得把价格再次乘以秒数。
+
+##### SD5 Seedance 标准版与快速版
+
+`sd5-seedance-2.0` 和 `sd5-seedance-2.0-fast` 使用相同字段，仅默认分辨率不同：
+
+| 字段 | 类型 | 约束 |
+| --- | --- | --- |
+| `prompt` | string | 必填，最多 1200 个字符 |
+| `duration` | integer | `4`～`15`；可使用字符串字段 `seconds` 作为兼容别名，但两者不得同时传 |
+| `aspect_ratio` | string | `16:9` 或 `9:16` |
+| `resolution` | string | `480p` 或 `720p` |
+| `generate_audio` | boolean | 可选，默认 `true` |
+| `reference_mode` | string | `frame` 或 `media`；默认 `frame` |
+| `first_image_url` / `last_image_url` | string | `frame` 模式必须成对出现；不得与全能参考素材混用 |
+| `images` | string[] | 仅 `media` 模式；最多 9 张 JPEG/PNG/WebP 公网 URL 或 data URI，单张不超过 10MB |
+| `reference_videos` | string[] | 仅 `media` 模式；最多 3 条可访问的 HTTPS URL，单条 1～15 秒、单条不超过 50MB，总时长不超过 45 秒 |
+| `reference_audios` | string[] | 仅 `media` 模式；最多 3 条可访问的 HTTPS URL，单条不超过 15 秒和 15MB |
+| `seed` | integer | 可选，`0`～`2147483647`；显式 `0` 必须保留 |
+| `negative_prompt` | string | 可选，最多 1200 个字符 |
+
+`media` 模式的图片、视频和音频数量合计 MUST 不超过 12。`n` 和 `response_format` 不受支持。FrostFox 必须根据用户选择显式发送 `reference_mode`，因为 new-api 不会为这两个模型自动补充该字段。
+
+全能参考示例：
+
+```json
+{
+  "model": "sd5-seedance-2.0-fast",
+  "prompt": "参考 @Image、@Video 和 @Audio，生成一段雨夜城市追车镜头",
+  "negative_prompt": "画面抖动、主体变形、文字水印",
+  "duration": 8,
+  "aspect_ratio": "16:9",
+  "resolution": "720p",
+  "generate_audio": true,
+  "reference_mode": "media",
+  "images": [
+    "https://assets.example/reference-1.png",
+    "https://assets.example/reference-2.png"
+  ],
+  "reference_videos": ["https://assets.example/reference-1.mp4"],
+  "reference_audios": ["https://assets.example/reference-1.wav"],
+  "seed": 0
+}
+```
+
+首尾帧示例：
+
+```json
+{
+  "model": "sd5-seedance-2.0",
+  "prompt": "在两个画面之间进行平滑的电影感过渡",
+  "duration": 6,
+  "aspect_ratio": "16:9",
+  "resolution": "720p",
+  "generate_audio": true,
+  "reference_mode": "frame",
+  "first_image_url": "https://assets.example/first-frame.png",
+  "last_image_url": "https://assets.example/last-frame.png"
+}
+```
+
+##### Seedance 2.0 标准版
+
+`seedance-2.0` 与两款 SD5 模型不是同一套字段。尤其是音频开关使用 `audio`，不是 `generate_audio`；参考图片使用 `image_url` 和 `reference_image_urls`，不是 `images`。
+
+| 字段 | 类型 | 约束 |
+| --- | --- | --- |
+| `prompt` | string | 必填，最多 5000 个字符；多模态提示词可以引用 `@image1`～`@image4`、`@video1`～`@video3`、`@audio1` |
+| `duration` | integer | 必填，`4`～`15` 任意整数 |
+| `aspect_ratio` | string | `16:9`、`9:16`、`1:1`、`21:9`、`3:4` 或 `4:3` |
+| `resolution` | string | `480p` 或 `720p`；不支持 `1080p` 或 `4K` |
+| `audio` | boolean | 是否生成原生音频，默认 `true` |
+| `image_url` | string | 单图或多模态第 1 张图；HTTPS URL 或 JPEG/PNG/WebP data URI |
+| `reference_image_urls` | string[] | 多模态额外图片；与 `image_url` 合计最多 4 张，单张不超过 30MB |
+| `reference_videos` | string[] | 最多 3 条 HTTPS URL；单条 4～15 秒、单条不超过 50MB，全部视频总时长不超过 15 秒；每边 720～2160 像素 |
+| `reference_audios` | string[] | 最多 1 条 HTTPS URL；不超过 15 秒和 15MB |
+| `first_image_url` / `last_image_url` | string | 首尾帧必须成对出现；不得与多模态素材混用 |
+| `image` | multipart file | 单图 multipart 上传字段；多图必须使用 JSON URL/data URI 字段 |
+
+多模态模式至少提供 `image_url`，其他参考图放入 `reference_image_urls`。FrostFox 必须在创建 Job 前探测参考视频的时长与尺寸，不能依赖上游异步失败后再提示用户。
+
+```json
+{
+  "model": "seedance-2.0",
+  "prompt": "参考 @image1 和 @image2 的人物，采用 @video1 的动作并配合 @audio1",
+  "duration": 8,
+  "aspect_ratio": "1:1",
+  "resolution": "720p",
+  "audio": true,
+  "image_url": "https://assets.example/character.png",
+  "reference_image_urls": ["https://assets.example/style.png"],
+  "reference_videos": ["https://assets.example/motion.mp4"],
+  "reference_audios": ["https://assets.example/music.mp3"]
+}
+```
+
+##### Omni 无水印模型
+
+`omni-fast-no-water` 固定约 10 秒、固定 `720p`，不接受可调时长、分辨率、音频、seed 或水印参数。完成前可能额外停留在 `processing`；FrostFox 继续将其映射为 `generating`。
+
+JSON 单图请求使用 `image_url`：
+
+```json
+{
+  "model": "omni-fast-no-water",
+  "prompt": "保持人物一致，让镜头缓慢向前推进",
+  "aspect_ratio": "16:9",
+  "image_url": "https://assets.example/character.png"
+}
+```
+
+首帧或尾帧使用 `first_image_url`、`last_image_url`，两者可以单独或成对发送。多图必须改用 `multipart/form-data`，每张不超过 5MB，并使用最多 5 个重复的 `input_reference` 文件字段；不要发送 JSON `images` 数组。当前协议不定义单图、首尾帧和多图模式互相混用的语义，FrostFox SHOULD 让每个 Job 只选择一种输入模式。
+
+`omni-v2v-no-water` 只用于视频转视频。JSON 请求使用 `video_url`：
+
+```json
+{
+  "model": "omni-v2v-no-water",
+  "prompt": "将画面风格转换为赛博朋克风，保留原始镜头运动",
+  "aspect_ratio": "16:9",
+  "video_url": "https://assets.example/source.mp4"
+}
+```
+
+也可以使用 `multipart/form-data` 的单个 `input_video` 文件字段。源视频 MUST 不超过 5MB，分辨率 MUST 不超过 `1920x1080`。FrostFox 不得为该模型显示图片、时长、分辨率、音频、seed 或水印控件。
+
+##### 新增模型的素材与 Cache Key 规则
+
+JSON 中的图片、视频和音频 URL 必须能被上游直接访问；FrostFox 应优先使用有足够读取有效期的签名 HTTPS URL。new-api 不会代为下载这些 URL 后再上传。data URI 只用于明确允许它的图片字段，视频和音频参考仍使用 HTTPS URL。
+
+视频 Cook Cache Key MUST 基于规范化后的完整有效请求计算：包含 public 模型名、prompt、negative prompt、所有模式与生成参数，以及按字段和数组顺序排列的每个输入 Asset 内容哈希。不得把会变化的签名 URL 字符串当作素材身份。首尾帧交换、参考数组换序、`audio`/`generate_audio` 改变或 `seed` 从缺省变为显式 `0` 都必须产生不同的 Cache Key。
 
 `Idempotency-Key` 仍应发送并持久化，便于后续协议升级，但当前视频 POST 不保证按该 Header 去重。Worker 对每个 Job 只能主动提交一次；POST 出现断线、超时或无法判断的 `5xx` 时必须进入 `submission_unknown`，禁止自动再次 POST。
 
