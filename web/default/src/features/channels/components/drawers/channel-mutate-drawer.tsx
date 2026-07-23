@@ -245,13 +245,11 @@ function hasAdvancedSettingsValues(values: ChannelFormValues): boolean {
     values.compact_replacement_channel_id ||
     values.proxy?.trim() ||
     values.system_prompt?.trim() ||
-    values.user_prompt_addition?.trim() ||
     values.force_format ||
     values.thinking_to_content ||
     values.pass_through_body_enabled ||
     values.disable_image_generation ||
     values.system_prompt_override ||
-    values.user_prompt_addition_enabled ||
     values.claude_beta_query ||
     values.upstream_model_update_check_enabled ||
     values.upstream_model_update_auto_sync_enabled ||
@@ -3334,56 +3332,6 @@ export function ChannelMutateDrawer({
                               onCheckedChange={field.onChange}
                             />
                           </FormControl>
-                        </FormItem>
-                      )}
-                    />
-
-                    <FormField
-                      control={form.control}
-                      name='user_prompt_addition_enabled'
-                      render={({ field }) => (
-                        <FormItem className='flex items-center justify-between'>
-                          <div className='space-y-0.5'>
-                            <FormLabel>{t('User Prompt Addition')}</FormLabel>
-                            <FormDescription>
-                              {t(
-                                'Prepend configured text to every user message'
-                              )}
-                            </FormDescription>
-                          </div>
-                          <FormControl>
-                            <Switch
-                              checked={field.value}
-                              onCheckedChange={field.onChange}
-                            />
-                          </FormControl>
-                        </FormItem>
-                      )}
-                    />
-
-                    <FormField
-                      control={form.control}
-                      name='user_prompt_addition'
-                      render={({ field }) => (
-                        <FormItem>
-                          <FormLabel>
-                            {t('User Prompt Addition Text')}
-                          </FormLabel>
-                          <FormControl>
-                            <Textarea
-                              placeholder={t(
-                                'Enter text to prepend to every user message'
-                              )}
-                              rows={3}
-                              {...field}
-                            />
-                          </FormControl>
-                          <FormDescription>
-                            {t(
-                              'Applied before converting the request to the upstream protocol'
-                            )}
-                          </FormDescription>
-                          <FormMessage />
                         </FormItem>
                       )}
                     />

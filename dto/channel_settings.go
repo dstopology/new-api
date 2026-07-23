@@ -8,8 +8,6 @@ type ChannelSettings struct {
 	DisableImageGeneration      bool   `json:"disable_image_generation,omitempty"`
 	SystemPrompt                string `json:"system_prompt,omitempty"`
 	SystemPromptOverride        bool   `json:"system_prompt_override,omitempty"`
-	UserPromptAdditionEnabled   bool   `json:"user_prompt_addition_enabled,omitempty"`
-	UserPromptAddition          string `json:"user_prompt_addition,omitempty"`
 	CompactReplacementChannelID int    `json:"compact_replacement_channel_id,omitempty"`
 	CompactReplacementScope     string `json:"compact_replacement_scope,omitempty"`
 }

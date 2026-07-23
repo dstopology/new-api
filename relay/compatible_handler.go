@@ -43,10 +43,6 @@ func TextHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *types
 	if err != nil {
 		return types.NewError(err, types.ErrorCodeChannelModelMappedError, types.ErrOptionWithSkipRetry())
 	}
-	userPromptAdditionApplied, err := applyUserPromptAddition(info, request)
-	if err != nil {
-		return types.NewError(err, types.ErrorCodeInvalidRequest, types.ErrOptionWithSkipRetry())
-	}
 	if err := RejectImageGenerationRequest(info); err != nil {
 		return err
 	}
@@ -78,7 +74,7 @@ func TextHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *types
 	adaptor.Init(info)
 
 	passThroughGlobal := model_setting.GetGlobalSettings().PassThroughRequestEnabled
-	passThroughEnabled := (passThroughGlobal || info.ChannelSetting.PassThroughBodyEnabled) && !userPromptAdditionApplied
+	passThroughEnabled := passThroughGlobal || info.ChannelSetting.PassThroughBodyEnabled
 	if info.RelayMode == relayconstant.RelayModeChatCompletions &&
 		!passThroughEnabled &&
 		service.ShouldChatCompletionsUseResponsesGlobal(info.ChannelId, info.ChannelType, info.OriginModelName) {
