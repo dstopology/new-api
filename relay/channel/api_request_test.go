@@ -17,9 +17,14 @@ func TestStartPingKeepAliveStopsBeforeReturning(t *testing.T) {
 	ctx, _ := gin.CreateTestContext(recorder)
 	ctx.Request = httptest.NewRequest(http.MethodPost, "/v1/images/generations", nil)
 
-	stop := startPingKeepAlive(ctx, time.Millisecond)
+	stop, done := startPingKeepAlive(ctx, time.Millisecond)
 	time.Sleep(10 * time.Millisecond)
 	stop()
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("ping keepalive did not stop")
+	}
 
 	written := recorder.Body.Len()
 	require.Positive(t, written)

@@ -326,9 +326,14 @@ func TestChannelAffinityHitCodexTemplatePassHeadersEffective(t *testing.T) {
 
 	info := &relaycommon.RelayInfo{
 		RequestHeaders: map[string]string{
-			"Originator": "Codex CLI",
-			"Session_id": "sess-123",
-			"User-Agent": "codex-cli-test",
+			"Originator":          "Codex CLI",
+			"Session_id":          "sess-legacy",
+			"Session-Id":          "sess-123",
+			"Thread-Id":           "thread-456",
+			"X-Client-Request-Id": "request-789",
+			"X-Codex-Turn-State":  "turn-state",
+			"X-OpenAI-Subagent":   "subagent-1",
+			"User-Agent":          "codex-cli-test",
 		},
 		ChannelMeta: &relaycommon.ChannelMeta{
 			ParamOverride: mergedOverride,
@@ -344,7 +349,12 @@ func TestChannelAffinityHitCodexTemplatePassHeadersEffective(t *testing.T) {
 
 	require.Equal(t, "legacy-static", info.RuntimeHeadersOverride["x-static"])
 	require.Equal(t, "Codex CLI", info.RuntimeHeadersOverride["originator"])
-	require.Equal(t, "sess-123", info.RuntimeHeadersOverride["session_id"])
+	require.Equal(t, "sess-legacy", info.RuntimeHeadersOverride["session_id"])
+	require.Equal(t, "sess-123", info.RuntimeHeadersOverride["session-id"])
+	require.Equal(t, "thread-456", info.RuntimeHeadersOverride["thread-id"])
+	require.Equal(t, "request-789", info.RuntimeHeadersOverride["x-client-request-id"])
+	require.Equal(t, "turn-state", info.RuntimeHeadersOverride["x-codex-turn-state"])
+	require.Equal(t, "subagent-1", info.RuntimeHeadersOverride["x-openai-subagent"])
 	require.Equal(t, "codex-cli-test", info.RuntimeHeadersOverride["user-agent"])
 
 	_, exists := info.RuntimeHeadersOverride["x-codex-beta-features"]
