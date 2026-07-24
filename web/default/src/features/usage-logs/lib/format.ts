@@ -221,14 +221,63 @@ export function getThroughputColor(
 }
 
 /**
+ * Calculate output throughput using generation time for streamed responses.
+ *
+ * Streamed logs store total request duration in seconds and first-response
+ * latency in milliseconds. When both are available, exclude the first-response
+ * latency so the result reflects sustained generation throughput. Fall back to
+ * total duration for non-streamed or legacy logs and for invalid timing data.
+ */
+export function getLogTokensPerSecond(
+  totalSeconds: number,
+  completionTokens: number,
+  isStream: boolean,
+  firstResponseTimeMs?: number
+): number | null {
+  if (
+    !Number.isFinite(totalSeconds) ||
+    totalSeconds <= 0 ||
+    !Number.isFinite(completionTokens) ||
+    completionTokens <= 0
+  ) {
+    return null
+  }
+
+  let generationSeconds = totalSeconds
+  if (
+    isStream &&
+    firstResponseTimeMs != null &&
+    Number.isFinite(firstResponseTimeMs) &&
+    firstResponseTimeMs > 0
+  ) {
+    const durationWithoutFirstResponse =
+      totalSeconds - firstResponseTimeMs / 1000
+    if (durationWithoutFirstResponse > 0) {
+      generationSeconds = durationWithoutFirstResponse
+    }
+  }
+
+  return completionTokens / generationSeconds
+}
+
+/**
  * Get response color using throughput only when enough output tokens exist.
  */
 export function getResponseTimeColor(
   seconds: number,
-  completionTokens: number
+  completionTokens: number,
+  isStream = false,
+  firstResponseTimeMs?: number
 ): 'success' | 'warning' | 'danger' {
   if (completionTokens < 100 || seconds <= 0) return getTimeColor(seconds)
-  return getThroughputColor(completionTokens / seconds)
+  const tokensPerSecond = getLogTokensPerSecond(
+    seconds,
+    completionTokens,
+    isStream,
+    firstResponseTimeMs
+  )
+  if (tokensPerSecond == null) return getTimeColor(seconds)
+  return getThroughputColor(tokensPerSecond)
 }
 
 /**

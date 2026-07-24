@@ -42,6 +42,7 @@ import type { UsageLog } from '../../data/schema'
 import {
   formatModelName,
   getFirstResponseTimeColor,
+  getLogTokensPerSecond,
   getResponseTimeColor,
   getTieredBillingSummary,
   getLogStatusCode,
@@ -890,11 +891,19 @@ export function useCommonLogsColumns(isAdmin: boolean): ColumnDef<UsageLog>[] {
         if (!isTimingLogType(log.type)) return null
 
         const useTime = row.getValue('use_time') as number
-        const tokensPerSecond =
-          useTime > 0 && log.completion_tokens > 0
-            ? log.completion_tokens / useTime
-            : null
-        const timeVariant = getResponseTimeColor(useTime, log.completion_tokens)
+        const other = parseLogOther(log.other)
+        const tokensPerSecond = getLogTokensPerSecond(
+          useTime,
+          log.completion_tokens,
+          log.is_stream,
+          other?.frt
+        )
+        const timeVariant = getResponseTimeColor(
+          useTime,
+          log.completion_tokens,
+          log.is_stream,
+          other?.frt
+        )
 
         return (
           <div className='flex flex-col gap-0.5'>
