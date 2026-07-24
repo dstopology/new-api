@@ -349,6 +349,15 @@ func UpdateOption(c *gin.Context) {
 			})
 			return
 		}
+	case "RetryIntervalMilliseconds":
+		interval, parseErr := strconv.Atoi(strings.TrimSpace(option.Value.(string)))
+		if parseErr != nil || interval < 0 || interval > 60000 {
+			c.JSON(http.StatusOK, gin.H{
+				"success": false,
+				"message": "重试间隔必须是 0 到 60000 之间的整数（毫秒）",
+			})
+			return
+		}
 	case "console_setting.api_info":
 		err = console_setting.ValidateConsoleSettings(option.Value.(string), "ApiInfo")
 		if err != nil {

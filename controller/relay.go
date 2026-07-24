@@ -238,6 +238,9 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 		if !shouldRetry(c, newAPIError, common.RetryTimes-retryParam.GetRetry()) {
 			break
 		}
+		if !waitBeforeRetry(c) {
+			break
+		}
 	}
 
 	useChannel := c.GetStringSlice("use_channel")
@@ -337,13 +340,13 @@ func shouldRetry(c *gin.Context, openaiErr *types.NewAPIError, retryTimes int) b
 	if service.ShouldSkipRetryAfterChannelAffinityFailure(c) {
 		return false
 	}
+	if retryTimes <= 0 {
+		return false
+	}
 	if types.IsChannelError(openaiErr) {
 		return true
 	}
 	if types.IsSkipRetryError(openaiErr) {
-		return false
-	}
-	if retryTimes <= 0 {
 		return false
 	}
 	if _, ok := c.Get("specific_channel_id"); ok {
@@ -360,6 +363,28 @@ func shouldRetry(c *gin.Context, openaiErr *types.NewAPIError, retryTimes int) b
 		return false
 	}
 	return operation_setting.ShouldRetryByStatusCode(code)
+}
+
+func waitBeforeRetry(c *gin.Context) bool {
+	interval := time.Duration(common.RetryIntervalMilliseconds) * time.Millisecond
+	if interval <= 0 {
+		return true
+	}
+
+	timer := time.NewTimer(interval)
+	defer timer.Stop()
+
+	var done <-chan struct{}
+	if c != nil && c.Request != nil {
+		done = c.Request.Context().Done()
+	}
+
+	select {
+	case <-timer.C:
+		return true
+	case <-done:
+		return false
+	}
 }
 
 func processChannelError(c *gin.Context, channelError types.ChannelError, err *types.NewAPIError) {
@@ -591,6 +616,9 @@ func executeRelayTask(c *gin.Context) (result *relay.TaskSubmitResult, relayInfo
 		}
 
 		if !shouldRetryTaskRelay(c, channel.Id, taskErr, common.RetryTimes-retryParam.GetRetry()) {
+			break
+		}
+		if !waitBeforeRetry(c) {
 			break
 		}
 	}

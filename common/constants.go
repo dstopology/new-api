@@ -156,6 +156,7 @@ var QuotaRemindThreshold = 1000
 var PreConsumedQuota = 500
 
 var RetryTimes = 0
+var RetryIntervalMilliseconds = 1000 // unit: millisecond
 
 //var RootUserEmail = ""
 
