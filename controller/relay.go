@@ -104,6 +104,27 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 					"error": newAPIError.ToClaudeError(),
 				})
 			default:
+				if relayInfo != nil &&
+					relayInfo.RelayMode == relayconstant.RelayModeResponses &&
+					relayInfo.IsStream {
+					if helper.IsResponsesStreamTerminalSent(c) {
+						return
+					}
+					if c.Writer != nil && c.Writer.Written() {
+						responseID, sequenceNumber := responsesStreamFailureCursor(relayInfo)
+						if err := helper.ResponsesFailureData(
+							c,
+							responseID,
+							sequenceNumber,
+							relayInfo.OriginModelName,
+							relayInfo.StartTime.Unix(),
+							newAPIError.ToOpenAIError(),
+						); err != nil {
+							logger.LogError(c, "failed to write responses stream error: "+err.Error())
+						}
+						return
+					}
+				}
 				c.JSON(newAPIError.StatusCode, gin.H{
 					"error": newAPIError.ToOpenAIError(),
 				})
@@ -337,6 +358,9 @@ func shouldRetry(c *gin.Context, openaiErr *types.NewAPIError, retryTimes int) b
 	if openaiErr == nil {
 		return false
 	}
+	if helper.IsResponsesStreamStarted(c) {
+		return false
+	}
 	if service.ShouldSkipRetryAfterChannelAffinityFailure(c) {
 		return false
 	}
@@ -363,6 +387,26 @@ func shouldRetry(c *gin.Context, openaiErr *types.NewAPIError, retryTimes int) b
 		return false
 	}
 	return operation_setting.ShouldRetryByStatusCode(code)
+}
+
+func responsesStreamFailureCursor(info *relaycommon.RelayInfo) (string, int64) {
+	if info == nil || info.StreamStatus == nil {
+		return "", 0
+	}
+	details := info.StreamStatus.DetailsSnapshot()
+	responseID, _ := details["response_id"].(string)
+	sequenceNumber := int64(0)
+	switch value := details["last_sequence_number"].(type) {
+	case int:
+		sequenceNumber = int64(value) + 1
+	case int32:
+		sequenceNumber = int64(value) + 1
+	case int64:
+		sequenceNumber = value + 1
+	case float64:
+		sequenceNumber = int64(value) + 1
+	}
+	return responseID, sequenceNumber
 }
 
 func waitBeforeRetry(c *gin.Context) bool {

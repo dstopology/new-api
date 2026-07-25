@@ -328,6 +328,9 @@ func appendStreamStatus(relayInfo *relaycommon.RelayInfo, other map[string]inter
 		}
 		streamInfo["errors"] = messages
 	}
+	if details := ss.DetailsSnapshot(); len(details) > 0 {
+		streamInfo["details"] = details
+	}
 	other["stream_status"] = streamInfo
 }
 

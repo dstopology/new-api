@@ -48,6 +48,7 @@ func TestStreamStatus_SetEndReason_Concurrent(t *testing.T) {
 		StreamEndReasonScannerErr,
 		StreamEndReasonHandlerStop,
 		StreamEndReasonEOF,
+		StreamEndReasonUpstreamTruncated,
 		StreamEndReasonPanic,
 		StreamEndReasonPingFail,
 	}
@@ -140,6 +141,7 @@ func TestStreamStatus_IsNormalEnd(t *testing.T) {
 		{StreamEndReasonTimeout, false},
 		{StreamEndReasonClientGone, false},
 		{StreamEndReasonScannerErr, false},
+		{StreamEndReasonUpstreamTruncated, false},
 		{StreamEndReasonPanic, false},
 		{StreamEndReasonPingFail, false},
 		{StreamEndReasonNone, false},
@@ -149,6 +151,24 @@ func TestStreamStatus_IsNormalEnd(t *testing.T) {
 		s.SetEndReason(tt.reason, nil)
 		assert.Equal(t, tt.normal, s.IsNormalEnd(), "reason=%s", tt.reason)
 	}
+}
+
+func TestStreamStatus_ReplaceEndReasonAndDetails(t *testing.T) {
+	t.Parallel()
+	s := NewStreamStatus()
+	s.SetEndReason(StreamEndReasonEOF, nil)
+	expectedErr := fmt.Errorf("missing terminal event")
+
+	assert.True(t, s.ReplaceEndReason(StreamEndReasonEOF, StreamEndReasonUpstreamTruncated, expectedErr))
+	assert.Equal(t, StreamEndReasonUpstreamTruncated, s.EndReason)
+	assert.Equal(t, expectedErr, s.EndError)
+	assert.False(t, s.IsNormalEnd())
+
+	s.SetDetail("last_event_type", "response.output_text.delta")
+	details := s.DetailsSnapshot()
+	assert.Equal(t, "response.output_text.delta", details["last_event_type"])
+	details["last_event_type"] = "mutated"
+	assert.Equal(t, "response.output_text.delta", s.DetailsSnapshot()["last_event_type"])
 }
 
 func TestStreamStatus_IsNormalEnd_NilSafe(t *testing.T) {

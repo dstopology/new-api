@@ -15,6 +15,8 @@ import (
 )
 
 const streamDownstreamGoneKey = "stream_downstream_gone"
+const responsesStreamStartedKey = "responses_stream_started"
+const responsesStreamTerminalSentKey = "responses_stream_terminal_sent"
 
 func MarkStreamDownstreamGone(c *gin.Context) {
 	if c == nil {
@@ -28,6 +30,26 @@ func IsStreamDownstreamGone(c *gin.Context) bool {
 		return false
 	}
 	return c.GetBool(streamDownstreamGoneKey)
+}
+
+func MarkResponsesStreamStarted(c *gin.Context) {
+	if c != nil {
+		c.Set(responsesStreamStartedKey, true)
+	}
+}
+
+func IsResponsesStreamStarted(c *gin.Context) bool {
+	return c != nil && c.GetBool(responsesStreamStartedKey)
+}
+
+func MarkResponsesStreamTerminalSent(c *gin.Context) {
+	if c != nil {
+		c.Set(responsesStreamTerminalSentKey, true)
+	}
+}
+
+func IsResponsesStreamTerminalSent(c *gin.Context) bool {
+	return c != nil && c.GetBool(responsesStreamTerminalSentKey)
 }
 
 func shouldSkipStreamWrite(c *gin.Context) bool {
@@ -115,6 +137,38 @@ func ResponseChunkData(c *gin.Context, resp dto.ResponsesStreamResponse, data st
 	c.Render(-1, common.CustomEvent{Data: fmt.Sprintf("event: %s\n", resp.Type)})
 	c.Render(-1, common.CustomEvent{Data: fmt.Sprintf("data: %s", data)})
 	_ = FlushWriter(c)
+}
+
+func ResponsesFailureData(c *gin.Context, responseID string, sequenceNumber int64, model string, createdAt int64, openAIError types.OpenAIError) error {
+	if responseID == "" {
+		responseID = "resp_" + common.GetUUID()
+	}
+	if createdAt <= 0 {
+		createdAt = common.GetTimestamp()
+	}
+	payload := map[string]any{
+		"type":            "response.failed",
+		"sequence_number": sequenceNumber,
+		"response": map[string]any{
+			"id":                 responseID,
+			"object":             "response",
+			"created_at":         createdAt,
+			"status":             "failed",
+			"completed_at":       nil,
+			"error":              openAIError,
+			"incomplete_details": nil,
+			"model":              model,
+			"output":             []any{},
+			"usage":              nil,
+		},
+	}
+	data, err := common.Marshal(payload)
+	if err != nil {
+		return err
+	}
+	ResponseChunkData(c, dto.ResponsesStreamResponse{Type: "response.failed"}, string(data))
+	MarkResponsesStreamTerminalSent(c)
+	return nil
 }
 
 func StringData(c *gin.Context, str string) error {

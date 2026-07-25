@@ -70,6 +70,21 @@ func ResponsesHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *
 		return types.NewError(fmt.Errorf("failed to copy request to GeneralOpenAIRequest: %w", err), types.ErrorCodeInvalidRequest, types.ErrOptionWithSkipRetry())
 	}
 
+	passThroughEnabled := model_setting.GetGlobalSettings().PassThroughRequestEnabled || info.ChannelSetting.PassThroughBodyEnabled
+	if info.IsStream && info.RelayMode == relayconstant.RelayModeResponses {
+		backgroundEnabled := request.Background != nil && *request.Background
+		if info.ApiType == appconstant.APITypeOpenAI &&
+			info.ChannelOtherSettings.EnableResponsesStreamResume &&
+			!passThroughEnabled {
+			request.Background = common.GetPointer(true)
+			backgroundEnabled = true
+		}
+		if info.ResponsesUsageInfo != nil {
+			info.ResponsesUsageInfo.Background = backgroundEnabled
+			info.ResponsesUsageInfo.StreamResumeEnabled = backgroundEnabled
+		}
+	}
+
 	err = helper.ModelMappedHelper(c, info, request)
 	if err != nil {
 		return types.NewError(err, types.ErrorCodeChannelModelMappedError, types.ErrOptionWithSkipRetry())
@@ -84,7 +99,6 @@ func ResponsesHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *
 	}
 	adaptor.Init(info)
 	var requestBody io.Reader
-	passThroughEnabled := model_setting.GetGlobalSettings().PassThroughRequestEnabled || info.ChannelSetting.PassThroughBodyEnabled
 	if passThroughEnabled {
 		storage, err := common.GetBodyStorage(c)
 		if err != nil {

@@ -32,6 +32,13 @@ const (
 	streamWriteTimeout = 30 * time.Second
 )
 
+type StreamScannerOptions struct {
+	// Finalize runs after every scanner/handler goroutine has stopped and before
+	// the final stream status is logged. Returning an error reclassifies a
+	// transport-level normal end as an upstream truncation.
+	Finalize func(status *relaycommon.StreamStatus) error
+}
+
 func getScannerBufferSize() int {
 	if constant.StreamScannerMaxBufferMB > 0 {
 		return constant.StreamScannerMaxBufferMB << 20
@@ -83,7 +90,7 @@ func ExtendWriteDeadline(c *gin.Context) {
 	_ = http.NewResponseController(c.Writer).SetWriteDeadline(time.Now().Add(streamWriteTimeout))
 }
 
-func StreamScannerHandler(c *gin.Context, resp *http.Response, info *relaycommon.RelayInfo, dataHandler func(data string, sr *StreamResult)) {
+func StreamScannerHandler(c *gin.Context, resp *http.Response, info *relaycommon.RelayInfo, dataHandler func(data string, sr *StreamResult), options ...StreamScannerOptions) {
 	if c == nil || c.Writer == nil || resp == nil || resp.Body == nil || info == nil || dataHandler == nil {
 		return
 	}
@@ -302,6 +309,16 @@ func StreamScannerHandler(c *gin.Context, resp *http.Response, info *relaycommon
 	}
 
 	cleanup()
+	if len(options) > 0 && options[0].Finalize != nil {
+		if err := options[0].Finalize(info.StreamStatus); err != nil {
+			endReason := info.StreamStatus.EndReason
+			if info.StreamStatus.IsNormalEnd() {
+				info.StreamStatus.ReplaceEndReason(endReason, relaycommon.StreamEndReasonUpstreamTruncated, err)
+			} else {
+				info.StreamStatus.RecordError(err.Error())
+			}
+		}
+	}
 	if info.StreamStatus.IsNormalEnd() && !info.StreamStatus.HasErrors() {
 		logger.LogInfo(c, fmt.Sprintf("stream ended: %s", info.StreamStatus.Summary()))
 	} else {

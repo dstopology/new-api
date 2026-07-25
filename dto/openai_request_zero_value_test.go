@@ -56,6 +56,7 @@ func TestOpenAIResponsesRequestPreserveExplicitZeroValues(t *testing.T) {
 		"max_output_tokens":0,
 		"max_tool_calls":0,
 		"stream":false,
+		"background":false,
 		"top_p":0,
 		"service_tier":""
 	}`)
@@ -70,6 +71,8 @@ func TestOpenAIResponsesRequestPreserveExplicitZeroValues(t *testing.T) {
 	require.True(t, gjson.GetBytes(encoded, "max_output_tokens").Exists())
 	require.True(t, gjson.GetBytes(encoded, "max_tool_calls").Exists())
 	require.True(t, gjson.GetBytes(encoded, "stream").Exists())
+	require.True(t, gjson.GetBytes(encoded, "background").Exists())
+	require.False(t, gjson.GetBytes(encoded, "background").Bool())
 	require.True(t, gjson.GetBytes(encoded, "top_p").Exists())
 	require.True(t, gjson.GetBytes(encoded, "service_tier").Exists())
 }

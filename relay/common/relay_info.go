@@ -57,7 +57,9 @@ type BuildInToolInfo struct {
 }
 
 type ResponsesUsageInfo struct {
-	BuiltInTools map[string]*BuildInToolInfo
+	BuiltInTools        map[string]*BuildInToolInfo
+	Background          bool
+	StreamResumeEnabled bool
 }
 
 type ChannelMeta struct {
