@@ -95,6 +95,77 @@ func OaiResponsesStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp
 
 	defer service.CloseResponseBodyGracefully(resp)
 
+	if !responsesStreamRecoveryEnabled(info) {
+		return oaiResponsesCompatibilityStreamHandler(c, info, resp)
+	}
+	return oaiResponsesRecoverableStreamHandler(c, info, resp)
+}
+
+func responsesStreamRecoveryEnabled(info *relaycommon.RelayInfo) bool {
+	return info != nil &&
+		info.ResponsesUsageInfo != nil &&
+		info.ResponsesUsageInfo.StreamResumeEnabled
+}
+
+// oaiResponsesCompatibilityStreamHandler preserves the permissive behavior
+// used for upstreams that do not implement the official background Responses
+// stream lifecycle. In particular, EOF without response.completed remains
+// accepted because some compatible providers routinely omit the terminal event.
+func oaiResponsesCompatibilityStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http.Response) (*dto.Usage, *types.NewAPIError) {
+	usage := &dto.Usage{}
+	var responseTextBuilder strings.Builder
+	completionFallback := newResponsesStreamCompletionFallback()
+
+	helper.StreamScannerHandler(c, resp, info, func(data string, sr *helper.StreamResult) {
+		var streamResponse dto.ResponsesStreamResponse
+		if err := common.UnmarshalJsonStr(data, &streamResponse); err != nil {
+			logger.LogError(c, "failed to unmarshal stream response: "+err.Error())
+			sr.Error(err)
+			return
+		}
+		if err := completionFallback.Observe(data); err != nil {
+			logger.LogError(c, "failed to observe responses stream event: "+err.Error())
+			sr.Error(err)
+			return
+		}
+
+		sendResponsesStreamData(c, streamResponse, data)
+		switch streamResponse.Type {
+		case "response.completed":
+			applyResponsesStreamResponse(c, usage, streamResponse.Response)
+		case "response.output_text.delta":
+			responseTextBuilder.WriteString(streamResponse.Delta)
+		case dto.ResponsesOutputTypeItemDone:
+			if streamResponse.Item != nil {
+				recordResponsesBuiltInToolCall(info, streamResponse.Item.Type)
+			}
+		}
+	})
+
+	if completionFallback.ShouldSynthesize(info) && !helper.IsStreamDownstreamGone(c) {
+		if err := completionFallback.SendCompleted(c, info); err != nil {
+			logger.LogError(c, "failed to synthesize response.completed: "+err.Error())
+			if info != nil && info.StreamStatus != nil {
+				info.StreamStatus.RecordError(err.Error())
+			}
+		}
+	}
+
+	if usage.CompletionTokens == 0 {
+		responseText := responseTextBuilder.String()
+		if responseText != "" {
+			usage.CompletionTokens = service.CountTextToken(responseText, info.UpstreamModelName)
+		}
+	}
+	if usage.PromptTokens == 0 && usage.CompletionTokens != 0 {
+		usage.PromptTokens = info.GetEstimatePromptTokens()
+	}
+	usage.TotalTokens = usage.PromptTokens + usage.CompletionTokens
+
+	return usage, nil
+}
+
+func oaiResponsesRecoverableStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http.Response) (*dto.Usage, *types.NewAPIError) {
 	var usage = &dto.Usage{}
 	var responseTextBuilder strings.Builder
 	tracker := newResponsesStreamTracker()

@@ -76,6 +76,21 @@ func TestOaiResponsesStreamHandlerDoesNotCompleteRegularIncompleteStream(t *test
 	require.Contains(t, recorder.Body.String(), "event: response.failed")
 }
 
+func TestOaiResponsesStreamHandlerCompatibilityAcceptsMissingTerminal(t *testing.T) {
+	body := `data: {"type":"response.created","sequence_number":0,"response":{"id":"resp_test","object":"response","created_at":123,"status":"in_progress","model":"gpt-5.6-sol","output":[]}}
+
+data: {"type":"response.output_item.done","sequence_number":1,"output_index":0,"item":{"id":"msg_1","type":"message","status":"completed","role":"assistant","content":[]}}
+
+`
+	recorder, usage, newAPIError := runResponsesStreamHandlerTest(t, body, false)
+
+	require.Nil(t, newAPIError)
+	require.NotNil(t, usage)
+	require.Contains(t, recorder.Body.String(), "event: response.created")
+	require.Contains(t, recorder.Body.String(), "event: response.output_item.done")
+	require.NotContains(t, recorder.Body.String(), "event: response.failed")
+}
+
 func TestOaiResponsesStreamHandlerRetriesSafelyBeforeMeaningfulOutput(t *testing.T) {
 	body := `data: {"type":"response.created","sequence_number":0,"response":{"id":"resp_test","object":"response","created_at":123,"status":"in_progress","model":"gpt-5.6-sol","output":[]}}
 
@@ -134,14 +149,21 @@ data: {"type":"response.failed","sequence_number":1,"response":{"id":"resp_test"
 	require.Empty(t, recorder.Body.String())
 }
 
-func runResponsesStreamHandlerTest(t *testing.T, body string) (*httptest.ResponseRecorder, *dto.Usage, *types.NewAPIError) {
+func runResponsesStreamHandlerTest(t *testing.T, body string, recoveryEnabled ...bool) (*httptest.ResponseRecorder, *dto.Usage, *types.NewAPIError) {
 	t.Helper()
+	enableRecovery := true
+	if len(recoveryEnabled) > 0 {
+		enableRecovery = recoveryEnabled[0]
+	}
 	gin.SetMode(gin.TestMode)
 	recorder := httptest.NewRecorder()
 	ctx, _ := gin.CreateTestContext(recorder)
 	ctx.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", nil)
 	info := &relaycommon.RelayInfo{
 		OriginModelName: "gpt-5.6-sol",
+		ResponsesUsageInfo: &relaycommon.ResponsesUsageInfo{
+			StreamResumeEnabled: enableRecovery,
+		},
 		ChannelMeta: &relaycommon.ChannelMeta{
 			UpstreamModelName: "gpt-5.6-sol-openai-compact",
 		},
