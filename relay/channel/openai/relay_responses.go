@@ -95,28 +95,12 @@ func OaiResponsesStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp
 
 	defer service.CloseResponseBodyGracefully(resp)
 
-	if !responsesStreamRecoveryEnabled(info) {
-		return oaiResponsesCompatibilityStreamHandler(c, info, resp)
-	}
-	return oaiResponsesRecoverableStreamHandler(c, info, resp)
-}
-
-func responsesStreamRecoveryEnabled(info *relaycommon.RelayInfo) bool {
-	return info != nil &&
-		info.ResponsesUsageInfo != nil &&
-		info.ResponsesUsageInfo.StreamResumeEnabled
-}
-
-// oaiResponsesCompatibilityStreamHandler preserves the permissive behavior
-// used for upstreams that do not implement the official background Responses
-// stream lifecycle. In particular, EOF without response.completed remains
-// accepted because some compatible providers routinely omit the terminal event.
-func oaiResponsesCompatibilityStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http.Response) (*dto.Usage, *types.NewAPIError) {
-	usage := &dto.Usage{}
+	var usage = &dto.Usage{}
 	var responseTextBuilder strings.Builder
 	completionFallback := newResponsesStreamCompletionFallback()
 
 	helper.StreamScannerHandler(c, resp, info, func(data string, sr *helper.StreamResult) {
+		// 检查当前数据是否包含 completed 状态和 usage 信息
 		var streamResponse dto.ResponsesStreamResponse
 		if err := common.UnmarshalJsonStr(data, &streamResponse); err != nil {
 			logger.LogError(c, "failed to unmarshal stream response: "+err.Error())
@@ -128,14 +112,35 @@ func oaiResponsesCompatibilityStreamHandler(c *gin.Context, info *relaycommon.Re
 			sr.Error(err)
 			return
 		}
-
 		sendResponsesStreamData(c, streamResponse, data)
 		switch streamResponse.Type {
 		case "response.completed":
-			applyResponsesStreamResponse(c, usage, streamResponse.Response)
+			if streamResponse.Response != nil {
+				if streamResponse.Response.Usage != nil {
+					if streamResponse.Response.Usage.InputTokens != 0 {
+						usage.PromptTokens = streamResponse.Response.Usage.InputTokens
+					}
+					if streamResponse.Response.Usage.OutputTokens != 0 {
+						usage.CompletionTokens = streamResponse.Response.Usage.OutputTokens
+					}
+					if streamResponse.Response.Usage.TotalTokens != 0 {
+						usage.TotalTokens = streamResponse.Response.Usage.TotalTokens
+					}
+					if streamResponse.Response.Usage.InputTokensDetails != nil {
+						usage.PromptTokensDetails.CachedTokens = streamResponse.Response.Usage.InputTokensDetails.CachedTokens
+					}
+				}
+				if streamResponse.Response.HasImageGenerationCall() {
+					c.Set("image_generation_call", true)
+					c.Set("image_generation_call_quality", streamResponse.Response.GetQuality())
+					c.Set("image_generation_call_size", streamResponse.Response.GetSize())
+				}
+			}
 		case "response.output_text.delta":
+			// 处理输出文本
 			responseTextBuilder.WriteString(streamResponse.Delta)
 		case dto.ResponsesOutputTypeItemDone:
+			// 函数调用处理
 			if streamResponse.Item != nil {
 				recordResponsesBuiltInToolCall(info, streamResponse.Item.Type)
 			}
@@ -149,148 +154,6 @@ func oaiResponsesCompatibilityStreamHandler(c *gin.Context, info *relaycommon.Re
 				info.StreamStatus.RecordError(err.Error())
 			}
 		}
-	}
-
-	if usage.CompletionTokens == 0 {
-		responseText := responseTextBuilder.String()
-		if responseText != "" {
-			usage.CompletionTokens = service.CountTextToken(responseText, info.UpstreamModelName)
-		}
-	}
-	if usage.PromptTokens == 0 && usage.CompletionTokens != 0 {
-		usage.PromptTokens = info.GetEstimatePromptTokens()
-	}
-	usage.TotalTokens = usage.PromptTokens + usage.CompletionTokens
-
-	return usage, nil
-}
-
-func oaiResponsesRecoverableStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http.Response) (*dto.Usage, *types.NewAPIError) {
-	var usage = &dto.Usage{}
-	var responseTextBuilder strings.Builder
-	tracker := newResponsesStreamTracker()
-	baseRequest := resp.Request
-	currentResponse := resp
-
-	for {
-		info.StreamStatus = relaycommon.NewStreamStatus()
-		tracker.handlerFailure = nil
-
-		helper.StreamScannerHandler(c, currentResponse, info, func(data string, sr *helper.StreamResult) {
-			var streamResponse dto.ResponsesStreamResponse
-			if err := common.UnmarshalJsonStr(data, &streamResponse); err != nil {
-				logger.LogError(c, "failed to unmarshal stream response: "+err.Error())
-				tracker.handlerFailure = newResponsesInterruptedAPIError(
-					fmt.Errorf("invalid responses stream event: %w", err),
-				)
-				sr.Stop(tracker.handlerFailure)
-				return
-			}
-
-			duplicate, err := tracker.observe(data, streamResponse)
-			if err != nil {
-				logger.LogError(c, "failed to observe responses stream event: "+err.Error())
-				tracker.handlerFailure = newResponsesInterruptedAPIError(
-					fmt.Errorf("invalid responses stream event: %w", err),
-				)
-				sr.Stop(tracker.handlerFailure)
-				return
-			}
-			if duplicate {
-				return
-			}
-
-			if isResponsesFailureTerminal(streamResponse.Type) {
-				failure := responsesFailureFromEvent(streamResponse)
-				if tracker.downstreamStarted {
-					tracker.forward(c, streamResponse, data)
-				}
-				tracker.markTerminal(c, streamResponse.Type, failure)
-				sr.Stop(failure)
-				return
-			}
-
-			tracker.forward(c, streamResponse, data)
-			switch {
-			case isResponsesSuccessTerminal(streamResponse.Type):
-				applyResponsesStreamResponse(c, usage, streamResponse.Response)
-				tracker.markTerminal(c, streamResponse.Type, nil)
-				sr.Done()
-			case isResponsesIncompleteTerminal(streamResponse.Type):
-				applyResponsesStreamResponse(c, usage, streamResponse.Response)
-				tracker.markTerminal(c, streamResponse.Type, nil)
-				sr.Done()
-			case streamResponse.Type == "response.output_text.delta":
-				responseTextBuilder.WriteString(streamResponse.Delta)
-			case streamResponse.Type == dto.ResponsesOutputTypeItemDone:
-				if streamResponse.Item != nil {
-					recordResponsesBuiltInToolCall(info, streamResponse.Item.Type)
-				}
-			}
-		}, helper.StreamScannerOptions{
-			Finalize: tracker.finalize,
-		})
-
-		tracker.applyStatus(info.StreamStatus)
-		if info.StreamStatus.EndReason == relaycommon.StreamEndReasonClientGone {
-			break
-		}
-		if tracker.handlerFailure != nil {
-			if tracker.downstreamStarted && !helper.IsStreamDownstreamGone(c) {
-				if err := tracker.sendFailure(c, info, tracker.handlerFailure); err != nil {
-					logger.LogError(c, "failed to send responses stream failure: "+err.Error())
-				}
-			}
-			return nil, tracker.handlerFailure
-		}
-		if tracker.terminalFailure != nil {
-			return nil, tracker.terminalFailure
-		}
-		if tracker.terminalSeen {
-			break
-		}
-
-		if tracker.completionFallback.ShouldSynthesize(info) && !helper.IsStreamDownstreamGone(c) {
-			if err := tracker.completionFallback.SendCompleted(c, info); err != nil {
-				logger.LogError(c, "failed to synthesize response.completed: "+err.Error())
-				info.StreamStatus.RecordError(err.Error())
-			} else {
-				tracker.syntheticTerminal = true
-				tracker.terminalSeen = true
-				tracker.terminalType = responsesCompletedEventType
-				helper.MarkResponsesStreamTerminalSent(c)
-				tracker.applyStatus(info.StreamStatus)
-				break
-			}
-		}
-
-		if tracker.canResume(info, baseRequest) && tracker.resumeAttempts < maxResponsesStreamResumeAttempts {
-			var resumedResponse *http.Response
-			for tracker.resumeAttempts < maxResponsesStreamResumeAttempts {
-				nextResponse, retryable, err := resumeResponsesStream(c, info, baseRequest, tracker)
-				tracker.applyStatus(info.StreamStatus)
-				if err == nil {
-					resumedResponse = nextResponse
-					break
-				}
-				logger.LogError(c, "failed to resume responses stream: "+err.Error())
-				if !retryable {
-					break
-				}
-			}
-			if resumedResponse != nil {
-				currentResponse = resumedResponse
-				continue
-			}
-		}
-
-		interrupted := newResponsesInterruptedAPIError(tracker.interruptionError())
-		if tracker.downstreamStarted && !helper.IsStreamDownstreamGone(c) {
-			if err := tracker.sendFailure(c, info, interrupted); err != nil {
-				logger.LogError(c, "failed to send responses stream failure: "+err.Error())
-			}
-		}
-		return nil, interrupted
 	}
 
 	if usage.CompletionTokens == 0 {
@@ -310,23 +173,4 @@ func oaiResponsesRecoverableStreamHandler(c *gin.Context, info *relaycommon.Rela
 	usage.TotalTokens = usage.PromptTokens + usage.CompletionTokens
 
 	return usage, nil
-}
-
-func applyResponsesStreamResponse(c *gin.Context, usage *dto.Usage, response *dto.OpenAIResponsesResponse) {
-	if usage == nil || response == nil {
-		return
-	}
-	if response.Usage != nil {
-		usage.PromptTokens = response.Usage.InputTokens
-		usage.CompletionTokens = response.Usage.OutputTokens
-		usage.TotalTokens = response.Usage.TotalTokens
-		if response.Usage.InputTokensDetails != nil {
-			usage.PromptTokensDetails.CachedTokens = response.Usage.InputTokensDetails.CachedTokens
-		}
-	}
-	if response.HasImageGenerationCall() {
-		c.Set("image_generation_call", true)
-		c.Set("image_generation_call_quality", response.GetQuality())
-		c.Set("image_generation_call_size", response.GetSize())
-	}
 }

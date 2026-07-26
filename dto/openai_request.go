@@ -831,9 +831,8 @@ type OpenAIResponsesRequest struct {
 	Model   string          `json:"model"`
 	Input   json.RawMessage `json:"input,omitempty"`
 	Include json.RawMessage `json:"include,omitempty"`
-	// Background keeps the response retrievable so an interrupted stream can
-	// resume from its last sequence number.
-	Background         *bool           `json:"background,omitempty"`
+	// 在后台运行推理，暂时还不支持依赖的接口
+	// Background         json.RawMessage `json:"background,omitempty"`
 	Conversation       json.RawMessage `json:"conversation,omitempty"`
 	ContextManagement  json.RawMessage `json:"context_management,omitempty"`
 	Instructions       json.RawMessage `json:"instructions,omitempty"`

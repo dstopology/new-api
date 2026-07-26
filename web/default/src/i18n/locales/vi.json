@@ -4675,8 +4675,6 @@
     "Save Node Studio settings": "Lưu cài đặt Node Studio",
     "Shared secret": "Khóa bí mật dùng chung",
     "Show Node Studio in the header after the receiving URL and shared secret are configured.": "Hiển thị Node Studio trên thanh đầu trang sau khi cấu hình URL tiếp nhận và khóa bí mật dùng chung.",
-    "The Node backend endpoint that accepts the encrypted payload by form POST.": "Điểm cuối backend Node nhận gói dữ liệu đã mã hóa bằng biểu mẫu POST.",
-    "Responses stream auto-resume": "Tự động tiếp tục luồng Responses",
-    "Force background mode for normal streaming Responses requests and resume from the last sequence number after an interruption. For request-body passthrough, the client must send background=true. Enable only if the upstream supports background mode.": "Buộc bật chế độ background cho các yêu cầu Responses dạng luồng thông thường và tiếp tục từ số thứ tự cuối cùng sau khi bị gián đoạn. Khi truyền thẳng phần thân yêu cầu, máy khách phải gửi background=true. Chỉ bật nếu upstream hỗ trợ chế độ background."
+    "The Node backend endpoint that accepts the encrypted payload by form POST.": "Điểm cuối backend Node nhận gói dữ liệu đã mã hóa bằng biểu mẫu POST."
   }
 }

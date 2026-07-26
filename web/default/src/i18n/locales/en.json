@@ -4675,8 +4675,6 @@
     "Save Node Studio settings": "Save Node Studio settings",
     "Shared secret": "Shared secret",
     "Show Node Studio in the header after the receiving URL and shared secret are configured.": "Show Node Studio in the header after the receiving URL and shared secret are configured.",
-    "The Node backend endpoint that accepts the encrypted payload by form POST.": "The Node backend endpoint that accepts the encrypted payload by form POST.",
-    "Responses stream auto-resume": "Responses stream auto-resume",
-    "Force background mode for normal streaming Responses requests and resume from the last sequence number after an interruption. For request-body passthrough, the client must send background=true. Enable only if the upstream supports background mode.": "Force background mode for normal streaming Responses requests and resume from the last sequence number after an interruption. For request-body passthrough, the client must send background=true. Enable only if the upstream supports background mode."
+    "The Node backend endpoint that accepts the encrypted payload by form POST.": "The Node backend endpoint that accepts the encrypted payload by form POST."
   }
 }

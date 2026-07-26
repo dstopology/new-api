@@ -10,16 +10,15 @@ import (
 type StreamEndReason string
 
 const (
-	StreamEndReasonNone              StreamEndReason = ""
-	StreamEndReasonDone              StreamEndReason = "done"
-	StreamEndReasonTimeout           StreamEndReason = "timeout"
-	StreamEndReasonClientGone        StreamEndReason = "client_gone"
-	StreamEndReasonScannerErr        StreamEndReason = "scanner_error"
-	StreamEndReasonHandlerStop       StreamEndReason = "handler_stop"
-	StreamEndReasonEOF               StreamEndReason = "eof"
-	StreamEndReasonUpstreamTruncated StreamEndReason = "upstream_truncated"
-	StreamEndReasonPanic             StreamEndReason = "panic"
-	StreamEndReasonPingFail          StreamEndReason = "ping_fail"
+	StreamEndReasonNone        StreamEndReason = ""
+	StreamEndReasonDone        StreamEndReason = "done"
+	StreamEndReasonTimeout     StreamEndReason = "timeout"
+	StreamEndReasonClientGone  StreamEndReason = "client_gone"
+	StreamEndReasonScannerErr  StreamEndReason = "scanner_error"
+	StreamEndReasonHandlerStop StreamEndReason = "handler_stop"
+	StreamEndReasonEOF         StreamEndReason = "eof"
+	StreamEndReasonPanic       StreamEndReason = "panic"
+	StreamEndReasonPingFail    StreamEndReason = "ping_fail"
 )
 
 const maxStreamErrorEntries = 20
@@ -30,14 +29,13 @@ type StreamErrorEntry struct {
 }
 
 type StreamStatus struct {
-	EndReason StreamEndReason
-	EndError  error
-	endOnce   sync.Once
+	EndReason  StreamEndReason
+	EndError   error
+	endOnce    sync.Once
 
 	mu         sync.Mutex
 	Errors     []StreamErrorEntry
 	ErrorCount int
-	Details    map[string]any
 }
 
 func NewStreamStatus() *StreamStatus {
@@ -49,28 +47,9 @@ func (s *StreamStatus) SetEndReason(reason StreamEndReason, err error) {
 		return
 	}
 	s.endOnce.Do(func() {
-		s.mu.Lock()
-		defer s.mu.Unlock()
 		s.EndReason = reason
 		s.EndError = err
 	})
-}
-
-// ReplaceEndReason reclassifies an already-finished stream when a
-// protocol-aware validator determines that the transport-level end marker was
-// not a valid protocol terminal event.
-func (s *StreamStatus) ReplaceEndReason(expected, reason StreamEndReason, err error) bool {
-	if s == nil {
-		return false
-	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if s.EndReason != expected {
-		return false
-	}
-	s.EndReason = reason
-	s.EndError = err
-	return true
 }
 
 func (s *StreamStatus) RecordError(msg string) {
@@ -106,40 +85,10 @@ func (s *StreamStatus) TotalErrorCount() int {
 	return s.ErrorCount
 }
 
-func (s *StreamStatus) SetDetail(key string, value any) {
-	if s == nil || key == "" {
-		return
-	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if s.Details == nil {
-		s.Details = make(map[string]any)
-	}
-	s.Details[key] = value
-}
-
-func (s *StreamStatus) DetailsSnapshot() map[string]any {
-	if s == nil {
-		return nil
-	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if len(s.Details) == 0 {
-		return nil
-	}
-	details := make(map[string]any, len(s.Details))
-	for key, value := range s.Details {
-		details[key] = value
-	}
-	return details
-}
-
 func (s *StreamStatus) IsNormalEnd() bool {
 	if s == nil {
 		return true
 	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
 	return s.EndReason == StreamEndReasonDone ||
 		s.EndReason == StreamEndReasonEOF ||
 		s.EndReason == StreamEndReasonHandlerStop
@@ -149,15 +98,15 @@ func (s *StreamStatus) Summary() string {
 	if s == nil {
 		return "StreamStatus<nil>"
 	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
 	b := &strings.Builder{}
 	fmt.Fprintf(b, "reason=%s", s.EndReason)
 	if s.EndError != nil {
 		fmt.Fprintf(b, " end_error=%q", s.EndError.Error())
 	}
+	s.mu.Lock()
 	if s.ErrorCount > 0 {
 		fmt.Fprintf(b, " soft_errors=%d", s.ErrorCount)
 	}
+	s.mu.Unlock()
 	return b.String()
 }

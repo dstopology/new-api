@@ -9,8 +9,6 @@ import (
 	"time"
 
 	"github.com/QuantumNous/new-api/common"
-	relaycommon "github.com/QuantumNous/new-api/relay/common"
-	"github.com/QuantumNous/new-api/relay/helper"
 	"github.com/QuantumNous/new-api/types"
 	"github.com/gin-gonic/gin"
 )
@@ -77,31 +75,5 @@ func TestShouldRetryChannelErrorRequiresRemainingAttempt(t *testing.T) {
 	}
 	if !shouldRetry(c, channelErr, 1) {
 		t.Fatal("channel error should retry while an attempt remains")
-	}
-}
-
-func TestShouldRetryStopsAfterResponsesOutputStarted(t *testing.T) {
-	c := retryTestContext(context.Background())
-	helper.MarkResponsesStreamStarted(c)
-	channelErr := types.NewError(errors.New("stream interrupted"), types.ErrorCodeUpstreamStreamInterrupted)
-
-	if shouldRetry(c, channelErr, 3) {
-		t.Fatal("responses stream must not restart after meaningful output was sent")
-	}
-}
-
-func TestResponsesStreamFailureCursor(t *testing.T) {
-	status := relaycommon.NewStreamStatus()
-	status.SetDetail("response_id", "resp_test")
-	status.SetDetail("last_sequence_number", int64(41))
-	info := &relaycommon.RelayInfo{StreamStatus: status}
-
-	responseID, sequenceNumber := responsesStreamFailureCursor(info)
-
-	if responseID != "resp_test" {
-		t.Fatalf("unexpected response id: %s", responseID)
-	}
-	if sequenceNumber != 42 {
-		t.Fatalf("unexpected sequence number: %d", sequenceNumber)
 	}
 }

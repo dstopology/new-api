@@ -17,7 +17,6 @@ const responsesCompletedEventType = "response.completed"
 
 type responsesStreamCompletionFallback struct {
 	sawCompleted         bool
-	sawTerminal          bool
 	sawCompactionItem    bool
 	hasSequenceNumber    bool
 	maxSequenceNumber    int64
@@ -46,11 +45,6 @@ func (f *responsesStreamCompletionFallback) Observe(data string) error {
 	eventType := common.Interface2String(event["type"])
 	if eventType == responsesCompletedEventType {
 		f.sawCompleted = true
-	}
-	switch eventType {
-	case responsesCompletedEventType, "response.done", "response.incomplete",
-		"response.failed", "response.error", "response.cancelled", "response.canceled", "error":
-		f.sawTerminal = true
 	}
 	if sequenceNumber, ok := responsesStreamInteger(event["sequence_number"]); ok {
 		if !f.hasSequenceNumber || sequenceNumber > f.maxSequenceNumber {
@@ -83,14 +77,10 @@ func (f *responsesStreamCompletionFallback) Observe(data string) error {
 }
 
 func (f *responsesStreamCompletionFallback) ShouldSynthesize(info *relaycommon.RelayInfo) bool {
-	if !f.CanSynthesize() || info == nil || info.StreamStatus == nil {
+	if f == nil || f.sawCompleted || !f.sawCompactionItem || info == nil || info.StreamStatus == nil {
 		return false
 	}
 	return info.StreamStatus.IsNormalEnd() && !info.StreamStatus.HasErrors()
-}
-
-func (f *responsesStreamCompletionFallback) CanSynthesize() bool {
-	return f != nil && !f.sawTerminal && f.sawCompactionItem
 }
 
 func (f *responsesStreamCompletionFallback) SendCompleted(c *gin.Context, info *relaycommon.RelayInfo) error {

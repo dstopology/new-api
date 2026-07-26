@@ -4675,8 +4675,6 @@
     "Save Node Studio settings": "保存 Node 工作室设置",
     "Shared secret": "共享密钥",
     "Show Node Studio in the header after the receiving URL and shared secret are configured.": "接收地址和共享密钥配置完成后，在顶部导航中显示 Node 工作室。",
-    "The Node backend endpoint that accepts the encrypted payload by form POST.": "Node 后端通过表单 POST 接收加密包的接口地址。",
-    "Responses stream auto-resume": "Responses 流自动续传",
-    "Force background mode for normal streaming Responses requests and resume from the last sequence number after an interruption. For request-body passthrough, the client must send background=true. Enable only if the upstream supports background mode.": "对普通 Responses 流式请求强制启用 background，并在中断后从最后一个 sequence_number 继续。请求体透传模式下，客户端必须自行发送 background=true。仅在上游支持 background 时开启。"
+    "The Node backend endpoint that accepts the encrypted payload by form POST.": "Node 后端通过表单 POST 接收加密包的接口地址。"
   }
 }

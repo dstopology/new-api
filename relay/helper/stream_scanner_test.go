@@ -553,26 +553,6 @@ func TestStreamScannerHandler_StreamStatus_EOFWithoutDone(t *testing.T) {
 	assert.True(t, info.StreamStatus.IsNormalEnd())
 }
 
-func TestStreamScannerHandler_FinalizerReclassifiesProtocolTruncation(t *testing.T) {
-	t.Parallel()
-
-	c, resp, info := setupStreamTest(t, strings.NewReader("data: {\"type\":\"response.created\"}\n"))
-	expectedErr := fmt.Errorf("missing terminal event")
-
-	StreamScannerHandler(c, resp, info, func(data string, sr *StreamResult) {}, StreamScannerOptions{
-		Finalize: func(status *relaycommon.StreamStatus) error {
-			status.SetDetail("last_event_type", "response.created")
-			return expectedErr
-		},
-	})
-
-	require.NotNil(t, info.StreamStatus)
-	assert.Equal(t, relaycommon.StreamEndReasonUpstreamTruncated, info.StreamStatus.EndReason)
-	assert.Equal(t, expectedErr, info.StreamStatus.EndError)
-	assert.False(t, info.StreamStatus.IsNormalEnd())
-	assert.Equal(t, "response.created", info.StreamStatus.DetailsSnapshot()["last_event_type"])
-}
-
 func TestStreamScannerHandler_StreamStatus_HandlerStop(t *testing.T) {
 	t.Parallel()
 
