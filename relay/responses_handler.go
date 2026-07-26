@@ -71,19 +71,7 @@ func ResponsesHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *
 	}
 
 	passThroughEnabled := model_setting.GetGlobalSettings().PassThroughRequestEnabled || info.ChannelSetting.PassThroughBodyEnabled
-	if info.IsStream && info.RelayMode == relayconstant.RelayModeResponses {
-		backgroundEnabled := request.Background != nil && *request.Background
-		if info.ApiType == appconstant.APITypeOpenAI &&
-			info.ChannelOtherSettings.EnableResponsesStreamResume &&
-			!passThroughEnabled {
-			request.Background = common.GetPointer(true)
-			backgroundEnabled = true
-		}
-		if info.ResponsesUsageInfo != nil {
-			info.ResponsesUsageInfo.Background = backgroundEnabled
-			info.ResponsesUsageInfo.StreamResumeEnabled = backgroundEnabled
-		}
-	}
+	prepareResponsesStreamRecovery(info, request, passThroughEnabled)
 
 	err = helper.ModelMappedHelper(c, info, request)
 	if err != nil {
@@ -198,4 +186,37 @@ func ResponsesHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *
 		service.PostTextConsumeQuota(c, info, usageDto, nil)
 	}
 	return nil
+}
+
+func prepareResponsesStreamRecovery(info *relaycommon.RelayInfo, request *dto.OpenAIResponsesRequest, passThroughEnabled bool) {
+	if info == nil || request == nil {
+		return
+	}
+
+	resumeSupported := info.IsStream &&
+		info.RelayMode == relayconstant.RelayModeResponses &&
+		info.ApiType == appconstant.APITypeOpenAI &&
+		info.ChannelOtherSettings.EnableResponsesStreamResume
+
+	backgroundEnabled := false
+	if passThroughEnabled {
+		// Pass-through mode owns the outbound body, so only enable recovery when
+		// the client explicitly requested a background stream on a capable channel.
+		backgroundEnabled = resumeSupported && request.Background != nil && *request.Background
+	} else if resumeSupported {
+		// Resuming by sequence_number requires the response to keep running after
+		// the original stream disconnects.
+		request.Background = common.GetPointer(true)
+		backgroundEnabled = true
+	} else {
+		// Most OpenAI-compatible Responses implementations reject background even
+		// when clients explicitly send false. Keep it out unless the channel has
+		// opted into the official background stream lifecycle.
+		request.Background = nil
+	}
+
+	if info.ResponsesUsageInfo != nil {
+		info.ResponsesUsageInfo.Background = backgroundEnabled
+		info.ResponsesUsageInfo.StreamResumeEnabled = backgroundEnabled
+	}
 }
