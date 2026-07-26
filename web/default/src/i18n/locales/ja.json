@@ -4675,6 +4675,8 @@
     "Save Node Studio settings": "Node Studio の設定を保存",
     "Shared secret": "共有シークレット",
     "Show Node Studio in the header after the receiving URL and shared secret are configured.": "受信 URL と共有シークレットの設定後、ヘッダーに Node Studio を表示します。",
-    "The Node backend endpoint that accepts the encrypted payload by form POST.": "暗号化されたペイロードをフォーム POST で受信する Node バックエンドのエンドポイントです。"
+    "The Node backend endpoint that accepts the encrypted payload by form POST.": "暗号化されたペイロードをフォーム POST で受信する Node バックエンドのエンドポイントです。",
+    "Responses stream auto-resume": "Responses ストリームの自動再開",
+    "Force background mode for normal streaming Responses requests and resume from the last sequence number after an interruption. For request-body passthrough, the client must send background=true. Enable only if the upstream supports background mode.": "通常の Responses ストリーミング要求では background モードを強制し、中断後に最後のシーケンス番号から再開します。リクエストボディ透過では、クライアントが background=true を送信する必要があります。アップストリームが background モードをサポートする場合のみ有効にしてください。"
   }
 }
