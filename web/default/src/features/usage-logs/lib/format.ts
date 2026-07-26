@@ -145,6 +145,35 @@ export const BURST_BODY_SIZE_FLOOR_BYTES = 64 * 1024 // 64KB absolute floor
 export const BURST_BYTES_PER_TOKEN = 40 // bytes per prompt token
 
 /**
+ * Format an inbound request body size for the compact usage-log badge.
+ * Values below 10 units keep one decimal; larger values are rounded so the
+ * badge stays short. Request bodies are normally KB/MB, with GB/TB reserved
+ * for unusually large or malformed Content-Length values.
+ */
+export function formatRequestBodySize(
+  bytes: number | null | undefined
+): string | null {
+  if (typeof bytes !== 'number' || !Number.isFinite(bytes) || bytes <= 0) {
+    return null
+  }
+
+  const units = [
+    { divisor: 1024 ** 4, label: 'TB' },
+    { divisor: 1024 ** 3, label: 'GB' },
+    { divisor: 1024 ** 2, label: 'MB' },
+    { divisor: 1024, label: 'KB' },
+  ] as const
+  const unit = units.find(({ divisor }) => bytes >= divisor) ?? units[3]
+  const value = bytes / unit.divisor
+
+  if (value < 0.1) return `<0.1${unit.label}`
+
+  const formatted =
+    value < 10 ? value.toFixed(1).replace(/\.0$/, '') : Math.round(value)
+  return `${formatted}${unit.label}`
+}
+
+/**
  * Content type of a consume request: image ("生图") vs text-only ("纯文"). Uses
  * ONLY the accurate image-billing flags (real image generation / image output);
  * body size is intentionally not considered, since a large body does not imply

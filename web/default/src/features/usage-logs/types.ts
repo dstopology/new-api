@@ -120,9 +120,8 @@ export interface LogOtherData {
   }
   request_path?: string
   status_code?: number | string
-  // Inbound request body size in bytes (Content-Length). Used for the fast
-  // "纯文 / 生图" preliminary tag in the usage log — image payloads are
-  // dominated by base64 and produce large bodies.
+  // Inbound request body size in bytes (Content-Length). Displayed as a compact
+  // human-readable badge in the usage log.
   request_body_size?: number
   user_agent?: string
   session_id?: string

@@ -41,6 +41,7 @@ import { LOG_TYPE_ALL_VALUE, LOG_TYPE_ENUM } from '../../constants'
 import type { UsageLog } from '../../data/schema'
 import {
   formatModelName,
+  formatRequestBodySize,
   getFirstResponseTimeColor,
   getLogTokensPerSecond,
   getResponseTimeColor,
@@ -750,15 +751,21 @@ export function useCommonLogsColumns(isAdmin: boolean): ColumnDef<UsageLog>[] {
             copyable={false}
           />
         ) : null
+        const requestBodySize = other?.request_body_size
+        const requestBodySizeLabel = isConsume
+          ? formatRequestBodySize(requestBodySize)
+          : null
         const volumeKind = isConsume
           ? getRequestVolumeKind(other, log.prompt_tokens)
           : null
-        const volumeBadge = volumeKind ? (
+        const bodySizeBadge = requestBodySizeLabel ? (
           <StatusBadge
-            label={volumeKind === 'burst' ? t('Burst') : t('Stable')}
+            label={requestBodySizeLabel}
             variant={volumeKind === 'burst' ? 'red' : 'neutral'}
             size='sm'
             copyable={false}
+            className='font-mono tabular-nums'
+            title={`${requestBodySize}B`}
           />
         ) : null
 
@@ -787,7 +794,7 @@ export function useCommonLogsColumns(isAdmin: boolean): ColumnDef<UsageLog>[] {
           <div className='flex items-center gap-1.5'>
             {statusContent}
             {kindBadge}
-            {volumeBadge}
+            {bodySizeBadge}
             {isAdmin &&
               (isFailure ? (
                 <FailureRecordDialog
