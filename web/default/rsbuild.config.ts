@@ -51,6 +51,9 @@ export default defineConfig(({ envMode }) => {
       },
     },
     source: {
+      define: {
+        'import.meta.env.VITE_FROSTFOX_MIGRATION_URL': JSON.stringify(process.env.VITE_FROSTFOX_MIGRATION_URL || env.rawPublicVars.VITE_FROSTFOX_MIGRATION_URL || ''),
+      },
       entry: {
         index: './src/main.tsx',
       },

@@ -16,6 +16,8 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
+import { useMemo } from 'react'
+import { useTranslation } from 'react-i18next'
 import { useStatus } from '@/hooks/use-status'
 import type { AnnouncementItem, ApiInfoItem, FAQItem } from '../types'
 
@@ -44,10 +46,37 @@ export function useApiInfo() {
  * Get announcements list
  */
 export function useAnnouncements() {
-  return useStatusData<AnnouncementItem>(
+  const { t } = useTranslation()
+  const result = useStatusData<AnnouncementItem>(
     'announcements_enabled',
     'announcements'
   )
+  const migrationUrl = import.meta.env.VITE_FROSTFOX_MIGRATION_URL
+
+  const items = useMemo(() => {
+    if (!migrationUrl) return result.items
+
+    try {
+      const url = new URL(migrationUrl)
+      if (url.protocol !== 'http:' && url.protocol !== 'https:') {
+        return result.items
+      }
+    } catch {
+      return result.items
+    }
+
+    return [
+      {
+        id: -1,
+        type: 'ongoing' as const,
+        content: `[${t('FrostFox migration is available')}](${migrationUrl})`,
+        publishDate: new Date().toISOString(),
+      },
+      ...result.items,
+    ]
+  }, [migrationUrl, result.items, t])
+
+  return { ...result, items }
 }
 
 /**

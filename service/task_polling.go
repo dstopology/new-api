@@ -129,50 +129,52 @@ func TaskPollingLoop() {
 	}
 	for {
 		time.Sleep(time.Duration(intervalSeconds) * time.Second)
-		common.SysLog("任务进度轮询开始")
-		ctx := context.TODO()
-		sweepTimedOutTasks(ctx)
-		sweepTimedOutAsyncImageTasks(ctx)
-		allTasks := model.GetAllUnFinishSyncTasks(constant.TaskQueryLimit)
-		platformTask := make(map[constant.TaskPlatform][]*model.Task)
-		for _, t := range allTasks {
-			platformTask[t.Platform] = append(platformTask[t.Platform], t)
-		}
-		for platform, tasks := range platformTask {
-			if len(tasks) == 0 {
-				continue
+		model.RunWalletTaskPoll(func() {
+			common.SysLog("任务进度轮询开始")
+			ctx := context.TODO()
+			sweepTimedOutTasks(ctx)
+			sweepTimedOutAsyncImageTasks(ctx)
+			allTasks := model.GetAllUnFinishSyncTasks(constant.TaskQueryLimit)
+			platformTask := make(map[constant.TaskPlatform][]*model.Task)
+			for _, t := range allTasks {
+				platformTask[t.Platform] = append(platformTask[t.Platform], t)
 			}
-			taskChannelM := make(map[int][]string)
-			taskM := make(map[string]*model.Task)
-			nullTaskIds := make([]int64, 0)
-			for _, task := range tasks {
-				upstreamID := task.GetUpstreamTaskID()
-				if upstreamID == "" {
-					// 统计失败的未完成任务
-					nullTaskIds = append(nullTaskIds, task.ID)
+			for platform, tasks := range platformTask {
+				if len(tasks) == 0 {
 					continue
 				}
-				taskM[upstreamID] = task
-				taskChannelM[task.ChannelId] = append(taskChannelM[task.ChannelId], upstreamID)
-			}
-			if len(nullTaskIds) > 0 {
-				err := model.TaskBulkUpdateByID(nullTaskIds, map[string]any{
-					"status":   "FAILURE",
-					"progress": "100%",
-				})
-				if err != nil {
-					logger.LogError(ctx, fmt.Sprintf("Fix null task_id task error: %v", err))
-				} else {
-					logger.LogInfo(ctx, fmt.Sprintf("Fix null task_id task success: %v", nullTaskIds))
+				taskChannelM := make(map[int][]string)
+				taskM := make(map[string]*model.Task)
+				nullTaskIds := make([]int64, 0)
+				for _, task := range tasks {
+					upstreamID := task.GetUpstreamTaskID()
+					if upstreamID == "" {
+						// 统计失败的未完成任务
+						nullTaskIds = append(nullTaskIds, task.ID)
+						continue
+					}
+					taskM[upstreamID] = task
+					taskChannelM[task.ChannelId] = append(taskChannelM[task.ChannelId], upstreamID)
 				}
-			}
-			if len(taskChannelM) == 0 {
-				continue
-			}
+				if len(nullTaskIds) > 0 {
+					err := model.TaskBulkUpdateByID(nullTaskIds, map[string]any{
+						"status":   "FAILURE",
+						"progress": "100%",
+					})
+					if err != nil {
+						logger.LogError(ctx, fmt.Sprintf("Fix null task_id task error: %v", err))
+					} else {
+						logger.LogInfo(ctx, fmt.Sprintf("Fix null task_id task success: %v", nullTaskIds))
+					}
+				}
+				if len(taskChannelM) == 0 {
+					continue
+				}
 
-			DispatchPlatformUpdate(platform, taskChannelM, taskM)
-		}
-		common.SysLog("任务进度轮询完成")
+				DispatchPlatformUpdate(platform, taskChannelM, taskM)
+			}
+			common.SysLog("任务进度轮询完成")
+		})
 	}
 }
 
@@ -188,11 +190,13 @@ func asyncImageTaskPollingLoop() {
 
 	for {
 		time.Sleep(time.Duration(intervalSeconds) * time.Second)
-		tasks := model.GetAllUnfinishedTasksByPlatform(constant.TaskPlatformAsyncImage, constant.TaskQueryLimit)
-		if len(tasks) == 0 {
-			continue
-		}
-		updateAsyncImageTasks(context.Background(), tasks, workerCount)
+		model.RunWalletTaskPoll(func() {
+			tasks := model.GetAllUnfinishedTasksByPlatform(constant.TaskPlatformAsyncImage, constant.TaskQueryLimit)
+			if len(tasks) == 0 {
+				return
+			}
+			updateAsyncImageTasks(context.Background(), tasks, workerCount)
+		})
 	}
 }
 

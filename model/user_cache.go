@@ -82,6 +82,18 @@ func updateUserCache(user User) error {
 
 // GetUserCache gets complete user cache from hash
 func GetUserCache(userId int) (userCache *UserBase, err error) {
+	database, err := walletUsesDatabase(userId)
+	if err != nil {
+		return nil, err
+	}
+	if database {
+		user, err := GetUserById(userId, false)
+		if err != nil {
+			return nil, err
+		}
+		base := user.ToBaseUser()
+		return base, nil
+	}
 	var user *User
 	var fromDB bool
 	defer func() {
