@@ -129,7 +129,9 @@ func SetApiRouter(router *gin.Engine) {
 			adminRoute := userRoute.Group("/")
 			adminRoute.Use(middleware.AdminAuth())
 			{
-				adminRoute.POST("/migration/wallet-transfer", middleware.CriticalRateLimit(), controller.TransferWalletForMigration)
+				// Server-to-server migration shares one caller IP across customers.
+				// AdminAuth and GlobalAPIRateLimit already protect this route.
+				adminRoute.POST("/migration/wallet-transfer", controller.TransferWalletForMigration)
 				adminRoute.GET("/", controller.GetAllUsers)
 				adminRoute.GET("/topup", controller.GetAllTopUps)
 				adminRoute.POST("/topup/complete", controller.AdminCompleteTopUp)

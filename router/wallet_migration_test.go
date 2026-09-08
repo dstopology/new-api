@@ -34,6 +34,11 @@ func TestWalletMigrationRouteRequiresAdministrator(t *testing.T) {
 	user := model.User{Username: "wallet-user", Password: hash, AffCode: "wallet-user", Role: common.RoleCommonUser, Status: common.UserStatusEnabled, AccessToken: &userToken, Quota: 5000000}
 	require.NoError(t, db.Create(&admin).Error)
 	require.NoError(t, db.Create(&user).Error)
+	oldCritical, oldCriticalNum, oldCriticalDuration := common.CriticalRateLimitEnable, common.CriticalRateLimitNum, common.CriticalRateLimitDuration
+	common.CriticalRateLimitEnable, common.CriticalRateLimitNum, common.CriticalRateLimitDuration = true, 20, 1200
+	t.Cleanup(func() {
+		common.CriticalRateLimitEnable, common.CriticalRateLimitNum, common.CriticalRateLimitDuration = oldCritical, oldCriticalNum, oldCriticalDuration
+	})
 	gin.SetMode(gin.TestMode)
 	engine := gin.New()
 	engine.Use(sessions.Sessions("wallet-test", cookie.NewStore([]byte("wallet-test-session-key"))))
@@ -68,6 +73,21 @@ func TestWalletMigrationRouteRequiresAdministrator(t *testing.T) {
 				require.Equal(t, user.Id, envelope.Data.UserID)
 			}
 		})
+	}
+	// FrostFox calls inspect and transfer for every customer from the same server IP.
+	// Authenticated migration traffic must not consume the 20-per-20-minute login budget.
+	for i := 0; i < 21; i++ {
+		req := httptest.NewRequest(http.MethodPost, "/api/user/migration/wallet-transfer", strings.NewReader(`{"action":"inspect","username":"wallet-user","password":"wallet-test-password"}`))
+		req.RemoteAddr = "203.0.113.47:12345"
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Authorization", "Bearer "+adminToken)
+		req.Header.Set("New-Api-User", strconv.Itoa(admin.Id))
+		response := httptest.NewRecorder()
+		engine.ServeHTTP(response, req)
+		require.Equal(t, http.StatusOK, response.Code, "migration inspect %d was rate limited", i+1)
+		var envelope struct{ Success bool }
+		require.NoError(t, common.Unmarshal(response.Body.Bytes(), &envelope))
+		require.True(t, envelope.Success)
 	}
 	var current model.User
 	require.NoError(t, db.First(&current, user.Id).Error)
