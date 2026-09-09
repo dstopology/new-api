@@ -16,12 +16,14 @@ The transfer waits outside transactions for up to 20 seconds, then atomically ve
 ## Endpoint
 
 `POST /api/user/migration/wallet-transfer`, under existing **AdminAuth** and critical rate limit. The public registration is removed. Send the administrator account access token in `Authorization: Bearer <token>` plus its numeric ID in `New-Api-User`. A model API key is not an administrator access token. FrostFox administrators configure the full endpoint URL, administrator ID, access token and enabled flag under Settings > Legacy migration > NewAPI wallet migration. All administrators may save it. A database singleton stores the token encrypted with the existing application key ring; reads return only token presence and an empty token on save preserves the current value. The next migration reads the saved configuration without a restart; the former FrostFox environment variables are no longer the source. The client refuses redirects. Keep the endpoint attached to the same NewAPI database so user bindings and pending receipts retain their meaning.
-The browser never sends the legacy password. The user copies the numeric legacy user ID from the NewAPI profile page and proves control by supplying that ID, the legacy username (or email alias), and the exact current balance displayed by NewAPI. FrostFox submits the ID as an integer and the balance as a decimal string so JSON floating-point conversion cannot change it. NewAPI resolves the username, requires the resolved user to equal the submitted `user_id`, multiplies the balance by its current `QuotaPerUnit` using exact decimal arithmetic, and compares it to the integer wallet quota. Unknown users, mismatched IDs, disabled/admin users, malformed values and balance mismatches return the same verification failure; the endpoint never returns the actual wallet balance.
+The browser never sends the legacy password. The user copies the numeric legacy user ID from the NewAPI profile page and supplies that ID, the legacy username (or email alias), and an approximate current balance in site USD. FrostFox submits the ID as an integer and the balance as a decimal string so JSON floating-point conversion cannot change it. NewAPI resolves the username, requires the resolved user to equal the submitted `user_id`, and uses the existing `walletMigrationBalanceMatches` owner to compare `abs(expected_balance * QuotaPerUnit - quota) <= QuotaPerUnit` with exact decimal arithmetic. The inclusive tolerance is USD 1.00, not local currency, a percentage, or a rounded comparison. Unknown users, mismatched IDs, disabled/admin users, malformed values and out-of-tolerance estimates are rejected. Inspect and failure responses do not disclose the actual wallet balance.
+
+On 2026-09-10 the user explicitly authorized this weaker balance proof, superseding exact equality. Actual USD 12.345678 accepts displayed 12.35 and both 11.345678 / 13.345678 boundaries, but rejects 11.345677 / 13.345679. For actual balances at most USD 1, an estimate of zero passes the balance part; usernames and IDs are not strong ownership credentials. Existing administrator authentication, eligibility, binding, cooldown and receipt ownership remain mandatory. Both NewAPI behavior and FrostFox copy/error classification need matching releases; this local change has not been deployed. The existing critical limiter still shares an egress-IP bucket; its production budget and administrator configuration have not been verified.
 
 Identify without changing quota:
 
 ```json
-{"action":"inspect","migration_id":"","user_id":123,"username":"old-user","expected_balance":"10.000000"}
+{"action":"inspect","migration_id":"","user_id":123,"username":"old-user","expected_balance":"12.35"}
 ```
 
 Successful response:
@@ -33,20 +35,20 @@ Successful response:
 FrostFox validates veteran eligibility, establishes a unique binding using `user_id`, and commits a pending transfer before sending:
 
 ```json
-{"action":"transfer","migration_id":"<durable-request-id>","user_id":123,"username":"old-user","expected_balance":"10.000000"}
+{"action":"transfer","migration_id":"<durable-request-id>","user_id":123,"username":"old-user","expected_balance":"12.35"}
 ```
 
-For a genuinely new transfer, NewAPI verifies the supplied balance before freezing the account. Requests admitted before the freeze may still settle while the account drains, so the exported receipt contains the final drained integer quota. Successful response data contains `transfer_id`, `migration_id`, `user_id`, `amount`, `quota_per_unit`, and `created_at` inside the same `success/message/data` envelope. Zero balance produces a zero-amount receipt. Negative balances, disabled/admin users and identity mismatches cannot create a new transfer.
+For a genuinely new transfer, NewAPI verifies the supplied balance with the same inclusive USD 1 tolerance under the wallet row lock before freezing the account. Requests admitted before the freeze may still settle while the account drains, so the exported receipt contains the final drained integer quota, never the user's estimate. Successful response data contains `transfer_id`, `migration_id`, `user_id`, `amount`, `quota_per_unit`, and `created_at` inside the same `success/message/data` envelope. Zero balance produces a zero-amount receipt. Negative balances, disabled/admin users and identity mismatches cannot create a new transfer.
 
 If FrostFox already has a pending row, its inspect request includes that `migration_id`, the bound `user_id`, and the user's newly submitted ID. FrostFox rejects a submitted ID that differs from the binding before calling NewAPI. An existing owner-checked receipt is returned even if the wallet has already been zeroed; otherwise the newly supplied username, user ID, and current balance must still match. This preserves recovery after a lost response without weakening new-transfer verification. An existing receipt remains bound to its original user on every replay, including unique-key recovery.
 
-Business errors retain NewAPI's HTTP 200 envelope with `success:false`. Notable errors are `wallet_migration_verification_failed`, `wallet_migration_busy` and `wallet_migration_not_enabled`; HTTP success alone never proves transfer success.
+Business errors retain NewAPI's HTTP 200 envelope with `success:false`. FrostFox maps only `wallet_migration_verification_failed`, `migration user changed` and `migration_id belongs to another user` to user verification failure. Busy, disabled mode, administrator authentication failures and unknown business errors map to service unavailable without exposing raw messages or automatic retries. HTTP success alone never proves transfer success.
 
 Cancellation uses the same username/user-ID/balance proof and pending identity with `action:"cancel"`. It only resumes the matching frozen ID; it does not refund an exported receipt, erase pending activity, or cancel another ID. Always retry the original operation to determine whether export committed.
 
 ## Recovery and compatibility
 
-Retry an uncertain transfer using the **same migration_id and old user identity**. A committed debit returns the original immutable receipt before checking the now-zero balance. A genuinely new transfer after another deposit requires a new ID and the new exact balance. FrostFox's pending row ID is its request ID; `transfer_id` is a separate NewAPI receipt ID.
+Retry an uncertain transfer using the **same migration_id and old user identity**. A committed debit returns the original immutable receipt before checking the now-zero balance. A genuinely new transfer after another deposit requires a new ID and an estimate within USD 1 of the new current balance. FrostFox's pending row ID is its request ID; `transfer_id` is a separate NewAPI receipt ID.
 
 FrostFox atomically commits the receipt and non-refundable additive credit under its existing account funds lock. A transport, response or local commit failure keeps the pending row, and the user can resubmit the user ID, username, and current displayed balance to resume. No password, balance proof, or credential-bearing background job is persisted.
 
@@ -54,6 +56,6 @@ Historical transfers created by the broken client may have no matching FrostFox 
 
 ## Validation
 
-`go test ./model ./middleware ./router ./service ./relay/channel/openai -count=1 -timeout 180s` runs related package suites. `TestWalletMigration*` covers ownership/replay, admission/freeze/resume, detached batches, deferred refund/poller lifetime, unfinished tasks, direct SQL and retention failures, stale profile writes, and the real admin route.
+`go test ./model ./middleware ./router ./service ./relay/channel/openai -count=1 -timeout 180s` runs related package suites. `TestWalletMigration*` covers inclusive USD tolerance boundaries, non-rounded comparison, zero/small balances, custom quota units, authoritative debit and replay after a top-up, ownership/replay, admission/freeze/resume, detached batches, deferred refund/poller lifetime, unfinished tasks, direct SQL and retention failures, stale profile writes, and the real admin route with a rounded display amount.
 
 A local-only external harness ran two NewAPI processes against shared PostgreSQL and Redis: one node waited for the other's admitted debit; unrelated account admission continued; duplicate IDs returned one receipt; injected old Redis quota was ignored on both nodes. FrostFox tests separately verified admin headers/config validation, normal credit and lost-response recovery. SQLite and PostgreSQL were executed; MySQL-specific runtime verification and performance/load tests were not run. No production credentials or balances were used.

@@ -27,7 +27,7 @@ type WalletTransfer struct {
 
 var ErrWalletMigrationVerification = errors.New("wallet_migration_verification_failed")
 
-// InspectWalletForMigration proves control using the exact current wallet balance without changing wallet state.
+// InspectWalletForMigration checks identity and a balance estimate within USD 1 without changing wallet state.
 // A pending operation may recover an owner-checked receipt after the exported wallet has already been zeroed.
 func InspectWalletForMigration(username, expectedBalance, migrationID string, expectedUserID int) (*User, error) {
 	user, err := resolveWalletMigrationUser(username)
@@ -95,7 +95,7 @@ func walletMigrationBalanceMatches(quota int, raw string) bool {
 		return false
 	}
 	unit, err := decimal.NewFromString(strconv.FormatFloat(common.QuotaPerUnit, 'f', -1, 64))
-	return err == nil && amount.Mul(unit).Equal(decimal.NewFromInt(int64(quota)))
+	return err == nil && amount.Mul(unit).Sub(decimal.NewFromInt(int64(quota))).Abs().LessThanOrEqual(unit)
 }
 
 func lookupWalletTransfer(tx *gorm.DB, migrationID string, userID int) (*WalletTransfer, error) {

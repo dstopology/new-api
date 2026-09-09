@@ -24,13 +24,14 @@ func TestWalletMigrationRouteRequiresAdministrator(t *testing.T) {
 	sqlDB, err := db.DB()
 	require.NoError(t, err)
 	sqlDB.SetMaxOpenConns(1)
-	oldDB, redis := model.DB, common.RedisEnabled
+	oldDB, redis, quotaPerUnit := model.DB, common.RedisEnabled, common.QuotaPerUnit
 	model.DB, common.RedisEnabled = db, false
-	t.Cleanup(func() { model.DB, common.RedisEnabled = oldDB, redis; sqlDB.Close() })
+	common.QuotaPerUnit = 500_000
+	t.Cleanup(func() { model.DB, common.RedisEnabled, common.QuotaPerUnit = oldDB, redis, quotaPerUnit; sqlDB.Close() })
 	require.NoError(t, db.AutoMigrate(&model.User{}))
 	adminToken, userToken := "wallet-admin-test-token", "wallet-user-test-token"
 	admin := model.User{Username: "wallet-admin", Password: "unused", AffCode: "wallet-admin", Role: common.RoleAdminUser, Status: common.UserStatusEnabled, AccessToken: &adminToken}
-	user := model.User{Username: "wallet-user", Password: "unused", AffCode: "wallet-user", Role: common.RoleCommonUser, Status: common.UserStatusEnabled, AccessToken: &userToken, Quota: 5000000}
+	user := model.User{Username: "wallet-user", Password: "unused", AffCode: "wallet-user", Role: common.RoleCommonUser, Status: common.UserStatusEnabled, AccessToken: &userToken, Quota: 6_172_839}
 	require.NoError(t, db.Create(&admin).Error)
 	require.NoError(t, db.Create(&user).Error)
 	gin.SetMode(gin.TestMode)
@@ -46,7 +47,7 @@ func TestWalletMigrationRouteRequiresAdministrator(t *testing.T) {
 		{"wrong administrator ID", adminToken, user.Id, false}, {"administrator", adminToken, admin.Id, true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			req := httptest.NewRequest(http.MethodPost, "/api/user/migration/wallet-transfer", strings.NewReader(fmt.Sprintf(`{"action":"inspect","user_id":%d,"username":"wallet-user","expected_balance":"10.000000"}`, user.Id)))
+			req := httptest.NewRequest(http.MethodPost, "/api/user/migration/wallet-transfer", strings.NewReader(fmt.Sprintf(`{"action":"inspect","user_id":%d,"username":"wallet-user","expected_balance":"12.35"}`, user.Id)))
 			req.Header.Set("Content-Type", "application/json")
 			if tc.token != "" {
 				req.Header.Set("Authorization", "Bearer "+tc.token)
@@ -70,5 +71,5 @@ func TestWalletMigrationRouteRequiresAdministrator(t *testing.T) {
 	}
 	var current model.User
 	require.NoError(t, db.First(&current, user.Id).Error)
-	require.Equal(t, 5000000, current.Quota)
+	require.Equal(t, 6_172_839, current.Quota)
 }
