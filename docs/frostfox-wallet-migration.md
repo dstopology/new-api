@@ -11,6 +11,10 @@ One production synthetic `inspect` verified the configured administrator authent
 
 Read-only ledger totals were 115 NewAPI receipts, 115 previously completed FrostFox rows and 3 pending rows; totals are not a receipt-by-receipt reconciliation and no real post-release transfer was executed by this release. Existing NewAPI no-available-channel 503 errors remained before and after cutover, despite healthy `/api/status`; this release did not repair channel configuration. See FrostFox's `doc/审计记录/REL-20260910-余额迁移修复与事故后加固发布.md` for source hashes, backups, verification commands and monitoring evidence.
 
+## Migration rate-limit follow-up (2026-09-10)
+
+The critical-bucket isolation was deployed as NewAPI `34a591d7e0886b5afe21dc7c7873b4ad0f7aa77b`, image `sha256:c120b5aa3be2d9b21a191bfc92e9fe4b226f8c1574516e6071133a0d9d511f8c`, without redeploying FrostFox. At 18:29:33 UTC, 21 consecutive synthetic identity `inspect` calls from the same FrostFox egress all reached normal administrator-authenticated identity verification without HTTP 429 or any financial operation. This supersedes the migration critical-bucket warning in the earlier deployment snapshot, not the remaining channel errors or global API capacity limit. Details: FrostFox's `doc/审计记录/REL-20260910-NewAPI迁移限流隔离修复.md`.
+
 ## Operational boundary
 
 Migration calls are administrator-authenticated server traffic. They use the existing global API flood limiter, but do not participate in the login/reset `CriticalRateLimit` bucket. The global limiter still uses client IP (`GLOBAL_API_RATE_LIMIT_ENABLE`, `GLOBAL_API_RATE_LIMIT`, `GLOBAL_API_RATE_LIMIT_DURATION`; defaults enabled, 180 requests per 180 seconds). FrostFox separately limits public submissions by the authenticated FrostFox account to once per ten seconds. This removes the accidental 20-per-20-minute choke point without disabling authentication or making migration traffic unlimited. Critical limits on login, password reset and other existing routes are unchanged. The earlier deployment evidence above records the pre-fix policy; the subsequent rate-limit patch changes only this route registration.
