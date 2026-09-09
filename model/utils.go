@@ -22,6 +22,7 @@ const (
 
 var batchUpdateStores []map[int]int
 var batchUpdateLocks []sync.Mutex
+var walletBatchActivity = make(map[int]int64)
 
 func init() {
 	for i := 0; i < BatchUpdateTypeCount; i++ {
@@ -42,6 +43,9 @@ func InitBatchUpdater() {
 func addNewRecord(type_ int, id int, value int) {
 	batchUpdateLocks[type_].Lock()
 	defer batchUpdateLocks[type_].Unlock()
+	if type_ == BatchUpdateTypeUserQuota && WalletMigrationEnabled {
+		walletBatchActivity[id]++
+	}
 	if _, ok := batchUpdateStores[type_][id]; !ok {
 		batchUpdateStores[type_][id] = value
 	} else {
@@ -68,9 +72,14 @@ func batchUpdate() {
 
 	common.SysLog("batch update started")
 	stores := make([]map[int]int, BatchUpdateTypeCount)
+	var walletActivity map[int]int64
 	for i := 0; i < BatchUpdateTypeCount; i++ {
 		batchUpdateLocks[i].Lock()
 		stores[i] = batchUpdateStores[i]
+		if i == BatchUpdateTypeUserQuota {
+			walletActivity = walletBatchActivity
+			walletBatchActivity = make(map[int]int64)
+		}
 		batchUpdateStores[i] = make(map[int]int)
 		batchUpdateLocks[i].Unlock()
 	}
@@ -107,7 +116,9 @@ func batchUpdate() {
 		userIDs[key] = struct{}{}
 	}
 	for key := range userIDs {
-		updateUserQuotaUsedQuotaAndRequestCount(key, userQuotaStore[key], usedQuotaStore[key], requestCountStore[key])
+		if err := updateUserQuotaUsedQuotaAndRequestCount(key, userQuotaStore[key], usedQuotaStore[key], requestCountStore[key]); err == nil && walletActivity[key] > 0 {
+			EndWalletActivity(key, walletActivity[key])
+		}
 	}
 	common.SysLog("batch update finished")
 }

@@ -122,6 +122,12 @@ export function ProfileHeader({ profile, loading }: ProfileHeaderProps) {
 
             <div className='text-muted-foreground flex flex-wrap items-center gap-x-2 gap-y-0.5 text-xs sm:gap-x-4 sm:text-sm'>
               <span className='truncate'>@{profile.username}</span>
+              <StatusBadge
+                label={`${t('User ID')}: ${profile.id}`}
+                variant='neutral'
+                size='sm'
+                copyText={String(profile.id)}
+              />
               {profile.email && (
                 <>
                   <span>•</span>

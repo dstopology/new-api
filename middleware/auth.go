@@ -153,6 +153,15 @@ func authHelper(c *gin.Context, minRole int) {
 	c.Set("user_group", session.Get("group"))
 	c.Set("use_access_token", useAccessToken)
 
+	if minRole == common.RoleCommonUser {
+		if err := model.BeginWalletActivity(id.(int), false); err != nil {
+			c.AbortWithStatusJSON(http.StatusServiceUnavailable, gin.H{"success": false, "message": "wallet_migration_busy"})
+			return
+		}
+		c.Next()
+		model.EndWalletActivity(id.(int), 1)
+		return
+	}
 	c.Next()
 }
 
@@ -387,6 +396,17 @@ func TokenAuth() func(c *gin.Context) {
 			logger.LogDebug(c, "Client IP %s passed the token IP restrictions check", clientIp)
 		}
 
+		if err := model.BeginWalletActivity(token.UserId, false); err != nil {
+			abortWithOpenAiMessage(c, http.StatusServiceUnavailable, "wallet_migration_busy")
+			return
+		}
+		// A panic cannot certify completion of accounting.
+		defer func() {
+			if p := recover(); p != nil {
+				panic(p)
+			}
+			model.EndWalletActivity(token.UserId, 1)
+		}()
 		userCache, err := model.GetUserCache(token.UserId)
 		if err != nil {
 			common.SysLog(fmt.Sprintf("TokenAuth GetUserCache error for user %d: %v", token.UserId, err))
