@@ -3,6 +3,14 @@
 This endpoint must be released together with FrostFox's repaired migration client.
 The prior client cannot read the NewAPI response envelope and must not initiate transfers.
 
+## 2026-09-10 deployment evidence
+
+NewAPI source `6329c7a9c84fad09e2899b1905ee584f52de279b` and FrostFox source `f4f380a97a0bb7a5564bd2fbbf0ad17a5cbd7a4b` were deployed together. The NewAPI image is `sha256:272cee55300a8dc8c0882c2f9ac950b4a74c9f91c0df3020d192b3255a01aeca`. The standard and candidate instances retained migration mode throughout natural connection drain; the final candidate was removed only after two zero-connection checks. A later documentation-only commit does not change this deployed source identity.
+
+One production synthetic `inspect` verified the configured administrator authentication without a transfer, cancellation, account freeze or financial write. Credentials remained inside FrostFox Control. The live critical limit is enabled at 20 requests per 1200 seconds, shared by client IP; multi-user migrations can still exhaust that budget. Do not disable all critical throttling as a workaround.
+
+Read-only ledger totals were 115 NewAPI receipts, 115 previously completed FrostFox rows and 3 pending rows; totals are not a receipt-by-receipt reconciliation and no real post-release transfer was executed by this release. Existing NewAPI no-available-channel 503 errors remained before and after cutover, despite healthy `/api/status`; this release did not repair channel configuration. See FrostFox's `doc/审计记录/REL-20260910-余额迁移修复与事故后加固发布.md` for source hashes, backups, verification commands and monitoring evidence.
+
 ## Operational boundary
 
 Deploy this version on **every** serving node with `WALLET_MIGRATION_ENABLED=true`, draining old instances normally during the rollout. Do not expose migration until no old/uncoordinated node remains. Keep the mode enabled after enrollment. Redis and `BATCH_UPDATE_ENABLED` may remain enabled; each migration pauses only the target account's new authenticated work.
