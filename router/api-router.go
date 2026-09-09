@@ -129,7 +129,8 @@ func SetApiRouter(router *gin.Engine) {
 			adminRoute := userRoute.Group("/")
 			adminRoute.Use(middleware.AdminAuth())
 			{
-				adminRoute.POST("/migration/wallet-transfer", middleware.CriticalRateLimit(), controller.TransferWalletForMigration)
+				// Admin-only migration traffic must not share the login/reset critical bucket.
+				adminRoute.POST("/migration/wallet-transfer", controller.TransferWalletForMigration)
 				adminRoute.GET("/", controller.GetAllUsers)
 				adminRoute.GET("/topup", controller.GetAllTopUps)
 				adminRoute.POST("/topup/complete", controller.AdminCompleteTopUp)
