@@ -15,9 +15,9 @@ import (
 // this process-wide mode while work is running. Old nodes cannot join the proof.
 var WalletMigrationEnabled = os.Getenv("WALLET_MIGRATION_ENABLED") == "true"
 
-// WalletMigrationAccount is the distributed admission/drain owner. UserID zero
+// WalletMigrationAccount owns distributed accounting activity and legacy freezes. UserID zero
 // represents task polling iterations, acquired BEFORE their task snapshot.
-// Activity is deliberately durable and has no TTL: a dead writer is not drained.
+// Activity is durable accounting evidence, not a snapshot migration prerequisite.
 type WalletMigrationAccount struct {
 	UserID      int    `gorm:"primaryKey;autoIncrement:false"`
 	FrozenID    string `gorm:"size:128;not null;default:''"`
@@ -97,7 +97,7 @@ func GoWalletRefund(userID int, refund func()) {
 }
 
 // The snapshot and its settlement share one lifetime, including worker joins.
-// No polling is paused; migration waits for an interval with no active snapshot.
+// No polling is paused; snapshot migration does not wait for this activity.
 func RunWalletTaskPoll(poll func()) {
 	if err := BeginWalletActivity(0, true); err != nil {
 		common.SysError("wallet migration cannot track task polling: " + err.Error())

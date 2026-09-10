@@ -456,15 +456,12 @@ func HardDeleteUserById(id int) error {
 	return err
 }
 
-func inviteUser(inviterId int) (err error) {
-	user, err := GetUserById(inviterId, true)
-	if err != nil {
-		return err
-	}
-	user.AffCount++
-	user.AffQuota += common.QuotaForInviter
-	user.AffHistoryQuota += common.QuotaForInviter
-	return DB.Save(user).Error
+func inviteUser(inviterId int) error {
+	return DB.Model(&User{}).Where("id = ?", inviterId).Updates(map[string]any{
+		"aff_count":   gorm.Expr("aff_count + 1"),
+		"aff_quota":   gorm.Expr("aff_quota + ?", common.QuotaForInviter),
+		"aff_history": gorm.Expr("aff_history + ?", common.QuotaForInviter),
+	}).Error
 }
 
 func (user *User) TransferAffQuotaToQuota(quota int) error {
@@ -481,7 +478,7 @@ func (user *User) TransferAffQuotaToQuota(quota int) error {
 	defer tx.Rollback() // 确保在函数退出时事务能回滚
 
 	// 加锁查询用户以确保数据一致性
-	err := tx.Set("gorm:query_option", "FOR UPDATE").First(&user, user.Id).Error
+	err := withRowLock(tx).First(user, user.Id).Error
 	if err != nil {
 		return err
 	}
@@ -496,7 +493,10 @@ func (user *User) TransferAffQuotaToQuota(quota int) error {
 	user.Quota += quota
 
 	// 保存用户状态
-	if err := tx.Save(user).Error; err != nil {
+	if err := tx.Model(&User{}).Where("id = ?", user.Id).Updates(map[string]any{
+		"aff_quota": gorm.Expr("aff_quota - ?", quota),
+		"quota":     gorm.Expr("quota + ?", quota),
+	}).Error; err != nil {
 		return err
 	}
 

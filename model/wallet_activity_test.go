@@ -3,6 +3,7 @@ package model
 import (
 	"context"
 	"errors"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -31,106 +32,110 @@ func walletMigrationUser(t *testing.T) User {
 	return user
 }
 
-func TestWalletMigrationWaitsForAccountAndResumes(t *testing.T) {
+func TestWalletMigrationExportsWhileAccountRemainsActive(t *testing.T) {
 	user := walletMigrationUser(t)
 	require.NoError(t, BeginWalletActivity(user.Id, false))
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 150*time.Millisecond)
 	defer cancel()
-	type result struct {
-		receipt *WalletTransfer
-		err     error
-	}
-	completed := make(chan result, 1)
 	id := uuid.NewString()
-	go func() {
-		receipt, err := TransferWalletForMigration(ctx, id, user.Id, user.Username, "10")
-		completed <- result{receipt, err}
-	}()
-	require.Eventually(t, func() bool {
-		var gate WalletMigrationAccount
-		return DB.First(&gate, "user_id = ?", user.Id).Error == nil && gate.FrozenID == id
-	}, 3*time.Second, 10*time.Millisecond)
-	require.ErrorIs(t, BeginWalletActivity(user.Id, false), ErrWalletMigrationBusy)
-	// Other accounts are still admitted while the target finishes its debit.
-	require.NoError(t, BeginWalletActivity(user.Id+1000000, false))
-	EndWalletActivity(user.Id+1000000, 1)
-	t.Cleanup(func() { DB.Where("user_id = ?", user.Id+1000000).Delete(&WalletMigrationAccount{}) })
 	require.NoError(t, DecreaseUserQuota(user.Id, 500000, false))
-	select {
-	case <-completed:
-		t.Fatal("export overtook the admitted request")
-	default:
-	}
-	EndWalletActivity(user.Id, 1)
-	got := <-completed
-	require.NoError(t, got.err)
-	require.Equal(t, 4500000, got.receipt.Amount)
+	receipt, err := TransferWalletForMigration(ctx, id, user.Id, user.Username, "9")
+	require.NoError(t, err)
+	require.Equal(t, 4500000, receipt.Amount)
+	var gate WalletMigrationAccount
+	require.NoError(t, DB.First(&gate, "user_id = ?", user.Id).Error)
+	require.EqualValues(t, 1, gate.Activity)
+	require.Empty(t, gate.FrozenID)
 	require.NoError(t, BeginWalletActivity(user.Id, false))
-	EndWalletActivity(user.Id, 1)
+	EndWalletActivity(user.Id, 2)
 }
 
-func TestWalletMigrationWaitsForDetachedBatch(t *testing.T) {
+func TestWalletMigrationDetachedBatchSettlesAfterSnapshot(t *testing.T) {
 	user := walletMigrationUser(t)
 	common.BatchUpdateEnabled = true
 	require.NoError(t, DecreaseUserQuota(user.Id, 500000, false))
 	entered, release, done := make(chan struct{}), make(chan struct{}), make(chan struct{})
 	name := "wallet-test-detached-batch"
+	var paused atomic.Bool
 	require.NoError(t, DB.Callback().Update().Before("gorm:begin_transaction").Register(name, func(tx *gorm.DB) {
-		if tx.Statement.Table == "users" {
+		if tx.Statement.Table == "users" && paused.CompareAndSwap(false, true) {
 			close(entered)
 			<-release
 		}
 	}))
 	t.Cleanup(func() { DB.Callback().Update().Remove(name) })
 	go func() { batchUpdate(); close(done) }()
+	t.Cleanup(func() {
+		select {
+		case <-release:
+		default:
+			close(release)
+		}
+		<-done
+	})
 	<-entered // the local map is already empty, but its SQL has not executed
 	id := uuid.NewString()
 	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
-	_, err := TransferWalletForMigration(ctx, id, user.Id, user.Username, "10")
+	receipt, err := TransferWalletForMigration(ctx, id, user.Id, user.Username, "10")
 	cancel()
-	require.Error(t, err)
-	var count int64
-	require.NoError(t, DB.Model(&WalletTransfer{}).Where("migration_id = ?", id).Count(&count).Error)
-	require.Zero(t, count)
+	require.NoError(t, err)
+	require.Equal(t, 5000000, receipt.Amount)
 	close(release)
 	<-done
 	require.NoError(t, DB.Callback().Update().Remove(name))
-	receipt, err := TransferWalletForMigration(context.Background(), id, user.Id, user.Username, "9")
+	quota, err := GetUserQuota(user.Id, false)
 	require.NoError(t, err)
-	require.Equal(t, 4500000, receipt.Amount)
+	require.Equal(t, -500000, quota)
+	replay, err := TransferWalletForMigration(t.Context(), id, user.Id, user.Username, "0")
+	require.NoError(t, err)
+	require.Equal(t, receipt.TransferID, replay.TransferID)
 	// Enrollment is permanent: later credits/debits bypass batching and Redis.
 	common.RedisEnabled = true // no Redis client: the DB path must not touch it
 	require.NoError(t, IncreaseUserQuota(user.Id, 700000, false))
-	quota, err := GetUserQuota(user.Id, false)
+	quota, err = GetUserQuota(user.Id, false)
 	require.NoError(t, err)
-	require.Equal(t, 700000, quota)
+	require.Equal(t, 200000, quota)
 	base, err := GetUserCache(user.Id)
 	require.NoError(t, err)
 	require.Equal(t, quota, base.Quota)
 }
 
-func TestWalletMigrationRetainsDeferredRefundAndPoller(t *testing.T) {
+func TestWalletMigrationKeepsDeferredRefundAndPollerOwnership(t *testing.T) {
 	user := walletMigrationUser(t)
 	release, done := make(chan struct{}), make(chan struct{})
-	GoWalletRefund(user.Id, func() { <-release; close(done) })
+	refundErr := make(chan error, 1)
+	GoWalletRefund(user.Id, func() {
+		<-release
+		refundErr <- IncreaseUserQuota(user.Id, 100000, true)
+		close(done)
+	})
 	require.NoError(t, BeginWalletActivity(0, true))
 	ctx, cancel := context.WithTimeout(context.Background(), 150*time.Millisecond)
-	_, err := TransferWalletForMigration(ctx, uuid.NewString(), user.Id, user.Username, "10")
+	id := uuid.NewString()
+	receipt, err := TransferWalletForMigration(ctx, id, user.Id, user.Username, "10")
 	cancel()
-	require.Error(t, err)
+	require.NoError(t, err)
+	require.Equal(t, 5000000, receipt.Amount)
+	var poller WalletMigrationAccount
+	require.NoError(t, DB.First(&poller, "user_id = ?", 0).Error)
+	require.EqualValues(t, 1, poller.Activity)
 	close(release)
 	<-done
+	require.NoError(t, <-refundErr)
 	EndWalletActivity(0, 1)
 	require.Eventually(t, func() bool {
 		var gate WalletMigrationAccount
 		return DB.First(&gate, "user_id = ?", user.Id).Error == nil && gate.Activity == 0
 	}, time.Second, 10*time.Millisecond)
-	receipt, err := TransferWalletForMigration(context.Background(), uuid.NewString(), user.Id, user.Username, "10")
+	replay, err := TransferWalletForMigration(t.Context(), id, user.Id, user.Username, "0")
 	require.NoError(t, err)
-	require.Equal(t, 5000000, receipt.Amount)
+	require.Equal(t, receipt.TransferID, replay.TransferID)
+	quota, err := GetUserQuota(user.Id, false)
+	require.NoError(t, err)
+	require.Equal(t, 100000, quota)
 }
 
-func TestWalletMigrationFailedMoneyWriteCannotDrain(t *testing.T) {
+func TestWalletMigrationPreservesFailedMoneyWriteEvidence(t *testing.T) {
 	for _, failRetention := range []bool{false, true} {
 		t.Run(map[bool]string{false: "quota SQL", true: "retention SQL"}[failRetention], func(t *testing.T) {
 			user := walletMigrationUser(t)
@@ -150,8 +155,12 @@ func TestWalletMigrationFailedMoneyWriteCannotDrain(t *testing.T) {
 			require.Positive(t, gate.Activity)
 			ctx, cancel := context.WithTimeout(context.Background(), 150*time.Millisecond)
 			defer cancel()
-			_, err = TransferWalletForMigration(ctx, uuid.NewString(), user.Id, user.Username, "10")
-			require.Error(t, err)
+			receipt, err := TransferWalletForMigration(ctx, uuid.NewString(), user.Id, user.Username, "10")
+			require.NoError(t, err)
+			require.Equal(t, 5000000, receipt.Amount)
+			retained := gate.Activity
+			require.NoError(t, DB.First(&gate, "user_id = ?", user.Id).Error)
+			require.Equal(t, retained, gate.Activity)
 		})
 	}
 }
@@ -161,12 +170,11 @@ func TestWalletMigrationPendingTaskAndStaleProfile(t *testing.T) {
 	task := Task{UserId: user.Id, Status: TaskStatusInProgress, Progress: "50%"}
 	require.NoError(t, DB.Create(&task).Error)
 	ctx, cancel := context.WithTimeout(context.Background(), 150*time.Millisecond)
-	_, err := TransferWalletForMigration(ctx, uuid.NewString(), user.Id, user.Username, "10")
+	receipt, err := TransferWalletForMigration(ctx, uuid.NewString(), user.Id, user.Username, "10")
 	cancel()
-	require.Error(t, err)
-	require.NoError(t, DB.Delete(&task).Error)
-	receipt, err := TransferWalletForMigration(context.Background(), uuid.NewString(), user.Id, user.Username, "10")
 	require.NoError(t, err)
+	require.NoError(t, DB.First(&task, task.ID).Error)
+	require.Equal(t, "IN_PROGRESS", string(task.Status))
 	user.DisplayName = "profile loaded before export"
 	require.NoError(t, user.Update(false))
 	require.NoError(t, inviteUser(user.Id))
@@ -192,4 +200,31 @@ func TestWalletMigrationCancelDoesNotEraseWorkOrAnotherFreeze(t *testing.T) {
 	quota, err := GetUserQuota(user.Id, true)
 	require.NoError(t, err)
 	require.Equal(t, 5000000, quota)
+}
+
+func TestWalletMigrationInvitationCannotRestoreSnapshot(t *testing.T) {
+	user := walletMigrationUser(t)
+	entered, release, done := make(chan struct{}), make(chan struct{}), make(chan error, 1)
+	var paused atomic.Bool
+	name := "wallet-test-invitation-race"
+	require.NoError(t, DB.Callback().Update().Before("gorm:begin_transaction").Register(name, func(tx *gorm.DB) {
+		if tx.Statement.Table == "users" && paused.CompareAndSwap(false, true) {
+			close(entered)
+			<-release
+		}
+	}))
+	t.Cleanup(func() { DB.Callback().Update().Remove(name) })
+	go func() { done <- inviteUser(user.Id) }()
+	<-entered
+	receipt, err := TransferWalletForMigration(t.Context(), uuid.NewString(), user.Id, user.Username, "10")
+	close(release)
+	inviteErr := <-done
+	require.NoError(t, err)
+	require.NoError(t, inviteErr)
+	require.Equal(t, 5000000, receipt.Amount)
+	var current User
+	require.NoError(t, DB.First(&current, user.Id).Error)
+	require.Zero(t, current.Quota)
+	require.Equal(t, 1, current.AffCount)
+	require.Equal(t, common.QuotaForInviter, current.AffQuota)
 }

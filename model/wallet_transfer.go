@@ -30,7 +30,7 @@ var ErrWalletMigrationVerification = errors.New("wallet_migration_verification_f
 // InspectWalletForMigration checks identity and a balance estimate within USD 1 without changing wallet state.
 // A pending operation may recover an owner-checked receipt after the exported wallet has already been zeroed.
 func InspectWalletForMigration(username, expectedBalance, migrationID string, expectedUserID int) (*User, error) {
-	user, err := resolveWalletMigrationUser(username)
+	user, err := resolveWalletMigrationUser(DB, username)
 	if err != nil {
 		return nil, err
 	}
@@ -53,19 +53,19 @@ func InspectWalletForMigration(username, expectedBalance, migrationID string, ex
 	return user, nil
 }
 
-func resolveWalletMigrationUser(username string) (*User, error) {
+func resolveWalletMigrationUser(db *gorm.DB, username string) (*User, error) {
 	username = strings.TrimSpace(username)
 	if username == "" || len(username) > 128 {
 		return nil, ErrWalletMigrationVerification
 	}
 	var user User
-	if err := DB.Where("username = ? OR email = ?", username, username).First(&user).Error; err != nil {
+	if err := db.Where("username = ? OR email = ?", username, username).First(&user).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, ErrWalletMigrationVerification
 		}
 		return nil, fmt.Errorf("%w: %v", ErrDatabase, err)
 	}
-	if user.Status != common.UserStatusEnabled || user.Role >= common.RoleAdminUser || user.Quota < 0 {
+	if user.Status != common.UserStatusEnabled || user.Role >= common.RoleAdminUser {
 		return nil, ErrWalletMigrationVerification
 	}
 	return &user, nil
@@ -73,7 +73,7 @@ func resolveWalletMigrationUser(username string) (*User, error) {
 
 func walletMigrationBalanceMatches(quota int, raw string) bool {
 	value := strings.TrimSpace(raw)
-	if value == "" || len(value) > 64 || math.IsNaN(common.QuotaPerUnit) || math.IsInf(common.QuotaPerUnit, 0) || common.QuotaPerUnit <= 0 {
+	if quota < 0 || value == "" || len(value) > 64 || math.IsNaN(common.QuotaPerUnit) || math.IsInf(common.QuotaPerUnit, 0) || common.QuotaPerUnit <= 0 {
 		return false
 	}
 	dotSeen, digitSeen := false, false
@@ -109,13 +109,14 @@ func lookupWalletTransfer(tx *gorm.DB, migrationID string, userID int) (*WalletT
 	return &receipt, nil
 }
 
-// TransferWalletForMigration freezes one account and waits outside transactions.
-// The same operation can resume after a lost response or a crashed coordinator.
+// TransferWalletForMigration exports the committed wallet snapshot without draining work.
+// Later settlement stays on the old wallet; replay always returns the original receipt.
 func TransferWalletForMigration(ctx context.Context, migrationID string, expectedUserID int, username, expectedBalance string) (*WalletTransfer, error) {
 	if migrationID == "" || len(migrationID) > 128 || expectedUserID <= 0 {
 		return nil, errors.New("invalid migration identity")
 	}
-	user, err := resolveWalletMigrationUser(username)
+	db := DB.WithContext(ctx)
+	user, err := resolveWalletMigrationUser(db, username)
 	if err != nil {
 		return nil, err
 	}
@@ -123,15 +124,21 @@ func TransferWalletForMigration(ctx context.Context, migrationID string, expecte
 		return nil, errors.New("migration user changed")
 	}
 	// A committed debit is recoverable even though the wallet balance is now zero.
-	if receipt, err := lookupWalletTransfer(DB, migrationID, user.Id); !errors.Is(err, gorm.ErrRecordNotFound) {
+	if receipt, err := lookupWalletTransfer(db, migrationID, user.Id); !errors.Is(err, gorm.ErrRecordNotFound) {
 		return receipt, err
 	}
 	if !WalletMigrationEnabled {
 		return nil, errors.New("wallet_migration_not_enabled")
 	}
-	err = DB.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+	var receipt *WalletTransfer
+	err = db.Transaction(func(tx *gorm.DB) error {
 		account, err := lockWalletAccount(tx, user.Id)
 		if err != nil {
+			return err
+		}
+		// Another caller can commit this ID after the optimistic lookup above.
+		if existing, err := lookupWalletTransfer(tx, migrationID, user.Id); !errors.Is(err, gorm.ErrRecordNotFound) {
+			receipt = existing
 			return err
 		}
 		if account.FrozenID != "" && account.FrozenID != migrationID {
@@ -143,96 +150,27 @@ func TransferWalletForMigration(ctx context.Context, migrationID string, expecte
 		}
 		if current.Status != common.UserStatusEnabled ||
 			current.Role >= common.RoleAdminUser ||
-			current.Quota < 0 ||
 			!walletMigrationBalanceMatches(current.Quota, expectedBalance) {
 			return ErrWalletMigrationVerification
 		}
-		return tx.Model(account).Updates(map[string]any{"frozen_id": migrationID, "direct_quota": true}).Error
+		receipt = &WalletTransfer{TransferID: uuid.NewString(), MigrationID: migrationID, UserID: user.Id, Amount: current.Quota, QuotaPerUnit: common.QuotaPerUnit}
+		if err := tx.Model(&current).Update("quota", 0).Error; err != nil {
+			return err
+		}
+		if err := tx.Create(receipt).Error; err != nil {
+			return err
+		}
+		// Never erase activity. Existing batches/refunds still own their late deltas.
+		return tx.Model(account).Updates(map[string]any{"direct_quota": true, "frozen_id": ""}).Error
 	})
 	if err != nil {
+		// Recover only within this attempt's budget; an expired attempt can replay its ID later.
+		if existing, lookupErr := lookupWalletTransfer(db, migrationID, user.Id); lookupErr == nil {
+			return existing, nil
+		}
 		return nil, err
 	}
-	// Bounded attempts restore admission even when streams/tasks cannot yet drain.
-	// A process crash leaves a durable freeze, recoverable with retry or cancel.
-	defer func() {
-		resume, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer cancel()
-		if err := CancelWalletMigration(resume, user.Id, migrationID); err != nil {
-			common.SysError("wallet migration resume failed: " + err.Error())
-		}
-	}()
-	ticker := time.NewTicker(100 * time.Millisecond)
-	defer ticker.Stop()
-	for {
-		var receipt *WalletTransfer
-		err = DB.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-			// Consistent lock order: poller gate -> target account -> wallet row.
-			poller, err := lockWalletAccount(tx, 0)
-			if err != nil {
-				return err
-			}
-			if poller.Activity != 0 {
-				return ErrWalletMigrationBusy
-			}
-			account, err := lockWalletAccount(tx, user.Id)
-			if err != nil {
-				return err
-			}
-			if existing, err := lookupWalletTransfer(tx, migrationID, user.Id); !errors.Is(err, gorm.ErrRecordNotFound) {
-				receipt = existing
-				return err
-			}
-			if account.FrozenID != migrationID || account.Activity != 0 {
-				return ErrWalletMigrationBusy
-			}
-			var pending int64
-			if err := tx.Model(&Task{}).Where("user_id = ? AND (status NOT IN ? OR progress <> ?)", user.Id, []string{"SUCCESS", "FAILURE"}, "100%").Count(&pending).Error; err != nil {
-				return err
-			}
-			if pending != 0 {
-				return ErrWalletMigrationBusy
-			}
-			if err := tx.Model(&Midjourney{}).Where("user_id = ? AND progress <> ?", user.Id, "100%").Count(&pending).Error; err != nil {
-				return err
-			}
-			if pending != 0 {
-				return ErrWalletMigrationBusy
-			}
-			var current User
-			if err := withRowLock(tx).First(&current, user.Id).Error; err != nil {
-				return err
-			}
-			if current.Status != common.UserStatusEnabled || current.Role >= common.RoleAdminUser {
-				return errors.New("user cannot transfer wallet quota")
-			}
-			if current.Quota < 0 {
-				return errors.New("wallet quota is negative")
-			}
-			receipt = &WalletTransfer{TransferID: uuid.NewString(), MigrationID: migrationID, UserID: user.Id, Amount: current.Quota, QuotaPerUnit: common.QuotaPerUnit}
-			if err := tx.Model(&current).Update("quota", 0).Error; err != nil {
-				return err
-			}
-			if err := tx.Create(receipt).Error; err != nil {
-				return err
-			}
-			return tx.Model(account).Update("frozen_id", "").Error
-		})
-		if err == nil {
-			return receipt, nil
-		}
-		if !errors.Is(err, ErrWalletMigrationBusy) {
-			// Commit acknowledgement can be lost. Only an owner-checked receipt recovers it.
-			if receipt, lookupErr := lookupWalletTransfer(DB, migrationID, user.Id); lookupErr == nil {
-				return receipt, nil
-			}
-			return nil, err
-		}
-		select {
-		case <-ctx.Done():
-			return nil, ErrWalletMigrationBusy
-		case <-ticker.C:
-		}
-	}
+	return receipt, nil
 }
 
 // Cancellation never touches money or activity, and cannot cancel another ID.
